@@ -89,11 +89,12 @@ COMMON_SRC = \
 OBJS = $(COMMON_SRC:.c=.o) doomgeneric_psp.o
 
 INCDIR =
-CFLAGS = -std=c99 -O2 -G0 -Wall -DPSP -DNORMALUNIX -DFEATURE_SOUND=0
+CFLAGS = -std=gnu99 -O2 -G0 -Wall -DPSP -DNORMALUNIX -DFEATURE_SOUND=0
 CFLAGS += -DDOOMGENERIC_RESX=480 -DDOOMGENERIC_RESY=272
 CFLAGS += -Wno-unused-variable -Wno-unused-parameter -Wno-pointer-sign
 CFLAGS += -Wno-missing-braces -Wno-implicit-function-declaration
-CFLAGS += -Wno-char-subscripts -Wno-sign-compare
+CFLAGS += -Wno-char-subscripts -Wno-sign-compare -Wno-format
+CFLAGS += -Wno-strict-aliasing -Wno-old-style-definition
 CXXFLAGS = $(CFLAGS)
 ASFLAGS = $(CFLAGS)
 
