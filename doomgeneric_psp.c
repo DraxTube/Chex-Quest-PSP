@@ -1,6 +1,7 @@
 /*
  * doomgeneric_psp.c - PSP platform for doomgeneric (Chex Quest)
  * Con debug log su ms0:/PSP/GAME/ChexQuest/debug.txt
+ * FIX: fullscreen scaling, input mapping, analog stick
  */
 
 #include "doomgeneric.h"
@@ -109,7 +110,7 @@ static void setup_callbacks(void)
 /* ==================== GU / Display ==================== */
 
 static uint32_t __attribute__((aligned(16))) gu_list[262144];
-static uint32_t __attribute__((aligned(16))) tex_buf[512 * 272];
+static uint32_t __attribute__((aligned(16))) tex_buf[512 * 512];
 
 typedef struct {
     unsigned short u, v;
@@ -133,7 +134,7 @@ static void gu_init(void)
     sceGuEnable(GU_SCISSOR_TEST);
 
     sceGuTexMode(GU_PSM_8888, 0, 0, GU_FALSE);
-    sceGuTexFilter(GU_NEAREST, GU_NEAREST);
+    sceGuTexFilter(GU_LINEAR, GU_LINEAR);
     sceGuTexFunc(GU_TFX_REPLACE, GU_TCC_RGB);
     sceGuTexWrap(GU_CLAMP, GU_CLAMP);
     sceGuEnable(GU_TEXTURE_2D);
@@ -166,10 +167,12 @@ static void draw_framebuffer(void)
 
     src_w = DOOMGENERIC_RESX;
     src_h = DOOMGENERIC_RESY;
-    if (src_w > SCR_W) src_w = SCR_W;
-    if (src_h > SCR_H) src_h = SCR_H;
-    if (src_w > 512)   src_w = 512;
 
+    /* Clamp sorgente alla texture 512x512 */
+    if (src_w > 512) src_w = 512;
+    if (src_h > 512) src_h = 512;
+
+    /* Copia pixel da DG_ScreenBuffer a tex_buf con conversione colore RGB->BGR per GU */
     for (y = 0; y < src_h; y++)
     {
         const uint32_t *src = (const uint32_t *)&DG_ScreenBuffer[y * DOOMGENERIC_RESX];
@@ -191,6 +194,10 @@ static void draw_framebuffer(void)
 
     sceGuTexImage(0, 512, 512, 512, tex_buf);
 
+    /*
+     * FIX FULLSCREEN: Disegna la texture scalata a tutto schermo 480x272
+     * usando strip da 64 pixel per rispettare il limite hardware PSP
+     */
     {
         int strip_w = 64;
         int sx;
@@ -200,6 +207,7 @@ static void draw_framebuffer(void)
             if (sx + sw > src_w)
                 sw = src_w - sx;
 
+            /* Mappa coordinate texture -> coordinate schermo proporzionalmente */
             short dx0 = (short)((sx * SCR_W) / src_w);
             short dx1 = (short)(((sx + sw) * SCR_W) / src_w);
 
@@ -215,7 +223,7 @@ static void draw_framebuffer(void)
             v[1].u = (unsigned short)(sx + sw);
             v[1].v = (unsigned short)src_h;
             v[1].x = dx1;
-            v[1].y = SCR_H;
+            v[1].y = (short)SCR_H;
             v[1].z = 0;
 
             sceGuDrawArray(GU_SPRITES,
@@ -238,7 +246,7 @@ static void draw_framebuffer(void)
 
 /* ==================== Input ==================== */
 
-#define KEYQ_SIZE 128
+#define KEYQ_SIZE 256
 
 static struct {
     unsigned char pressed;
@@ -269,69 +277,82 @@ static void check_btn(uint32_t old_b, uint32_t new_b,
     if (!now && was)  keyq_push(0, doomkey);
 }
 
-static int analog_state[4] = {0, 0, 0, 0};
+static int analog_left = 0, analog_right = 0, analog_up = 0, analog_down = 0;
 
 static void poll_input(void)
 {
     SceCtrlData pad;
     int ax, ay;
-    int thr = 50;
+    int thr = 40;
     int state;
 
     sceCtrlPeekBufferPositive(&pad, 1);
 
     if (!pad_initialized)
     {
-        pad_prev = pad;
+        memset(&pad_prev, 0, sizeof(pad_prev));
+        pad_prev.Lx = 128;
+        pad_prev.Ly = 128;
         pad_initialized = 1;
-        return;
     }
 
     uint32_t ob = pad_prev.Buttons;
     uint32_t nb = pad.Buttons;
 
+    /* D-pad: movimento */
     check_btn(ob, nb, PSP_CTRL_UP,       KEY_UPARROW);
     check_btn(ob, nb, PSP_CTRL_DOWN,     KEY_DOWNARROW);
     check_btn(ob, nb, PSP_CTRL_LEFT,     KEY_LEFTARROW);
     check_btn(ob, nb, PSP_CTRL_RIGHT,    KEY_RIGHTARROW);
+
+    /* Bottoni azione */
     check_btn(ob, nb, PSP_CTRL_CROSS,    KEY_FIRE);
     check_btn(ob, nb, PSP_CTRL_CIRCLE,   KEY_USE);
     check_btn(ob, nb, PSP_CTRL_SQUARE,   KEY_STRAFE_L);
     check_btn(ob, nb, PSP_CTRL_TRIANGLE, KEY_STRAFE_R);
+
+    /* Trigger: strafe */
     check_btn(ob, nb, PSP_CTRL_LTRIGGER, KEY_STRAFE_L);
     check_btn(ob, nb, PSP_CTRL_RTRIGGER, KEY_STRAFE_R);
+
+    /* Start = Escape (menu), Select = Tab (automap) */
     check_btn(ob, nb, PSP_CTRL_START,    KEY_ESCAPE);
     check_btn(ob, nb, PSP_CTRL_SELECT,   KEY_TAB);
 
+    /* Analog stick -> frecce direzionali */
     ax = (int)pad.Lx - 128;
     ay = (int)pad.Ly - 128;
 
+    /* Sinistra */
     state = (ax < -thr) ? 1 : 0;
-    if (state != analog_state[0])
+    if (state != analog_left)
     {
         keyq_push(state, KEY_LEFTARROW);
-        analog_state[0] = state;
+        analog_left = state;
     }
 
+    /* Destra */
     state = (ax > thr) ? 1 : 0;
-    if (state != analog_state[1])
+    if (state != analog_right)
     {
         keyq_push(state, KEY_RIGHTARROW);
-        analog_state[1] = state;
+        analog_right = state;
     }
 
+    /* Su */
     state = (ay < -thr) ? 1 : 0;
-    if (state != analog_state[2])
+    if (state != analog_up)
     {
         keyq_push(state, KEY_UPARROW);
-        analog_state[2] = state;
+        analog_up = state;
     }
 
+    /* Giù */
     state = (ay > thr) ? 1 : 0;
-    if (state != analog_state[3])
+    if (state != analog_down)
     {
         keyq_push(state, KEY_DOWNARROW);
-        analog_state[3] = state;
+        analog_down = state;
     }
 
     pad_prev = pad;
@@ -352,6 +373,8 @@ void DG_Init(void)
     sceCtrlSetSamplingCycle(0);
     sceCtrlSetSamplingMode(PSP_CTRL_MODE_ANALOG);
     memset(&pad_prev, 0, sizeof(pad_prev));
+    pad_prev.Lx = 128;
+    pad_prev.Ly = 128;
     pad_initialized = 0;
     dbg_log("DG_Init: ctrl OK");
 
@@ -383,6 +406,7 @@ uint32_t DG_GetTicksMs(void)
     uint32_t res;
     sceRtcGetCurrentTick(&tick);
     res = sceRtcGetTickResolution();
+    if (res == 0) res = 1000000;
     return (uint32_t)(tick / (res / 1000u));
 }
 
@@ -414,6 +438,8 @@ int main(int argc, char **argv)
     dbg_init();
     dbg_log("=== Chex Quest PSP starting ===");
     dbg_logn("argc", argc);
+    dbg_logn("DOOMGENERIC_RESX", DOOMGENERIC_RESX);
+    dbg_logn("DOOMGENERIC_RESY", DOOMGENERIC_RESY);
 
     const char *search_paths[] = {
         "ms0:/PSP/GAME/ChexQuest/chex.wad",
