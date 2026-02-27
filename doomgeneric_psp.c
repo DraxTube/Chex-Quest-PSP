@@ -1,5 +1,6 @@
 /*
  * doomgeneric_psp.c - PSP platform for doomgeneric (Chex Quest)
+ * Con debug log su ms0:/PSP/GAME/ChexQuest/debug.txt
  */
 
 #include "doomgeneric.h"
@@ -16,6 +17,53 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
+
+/* ==================== Debug Log ==================== */
+
+static FILE *dbg_file = NULL;
+
+static void dbg_init(void)
+{
+    dbg_file = fopen("debug.txt", "w");
+    if (!dbg_file)
+        dbg_file = fopen("ms0:/PSP/GAME/ChexQuest/debug.txt", "w");
+}
+
+static void dbg_log(const char *msg)
+{
+    if (dbg_file)
+    {
+        fprintf(dbg_file, "%s\n", msg);
+        fflush(dbg_file);
+    }
+}
+
+static void dbg_log2(const char *msg, const char *arg)
+{
+    if (dbg_file)
+    {
+        fprintf(dbg_file, "%s: %s\n", msg, arg);
+        fflush(dbg_file);
+    }
+}
+
+static void dbg_logn(const char *msg, int val)
+{
+    if (dbg_file)
+    {
+        fprintf(dbg_file, "%s: %d\n", msg, val);
+        fflush(dbg_file);
+    }
+}
+
+static void dbg_close(void)
+{
+    if (dbg_file)
+    {
+        fclose(dbg_file);
+        dbg_file = NULL;
+    }
+}
 
 /* ==================== PSP Module Info ==================== */
 
@@ -70,6 +118,8 @@ typedef struct {
 
 static void gu_init(void)
 {
+    dbg_log("gu_init: start");
+
     sceGuInit();
     sceGuStart(GU_DIRECT, gu_list);
 
@@ -100,7 +150,11 @@ static void gu_init(void)
 
     sceDisplayWaitVblankStart();
     sceGuDisplay(GU_TRUE);
+
+    dbg_log("gu_init: done");
 }
+
+static int frame_count = 0;
 
 static void draw_framebuffer(void)
 {
@@ -174,6 +228,12 @@ static void draw_framebuffer(void)
     sceGuSync(0, 0);
     sceDisplayWaitVblankStart();
     sceGuSwapBuffers();
+
+    frame_count++;
+    if (frame_count <= 5 || (frame_count % 60) == 0)
+    {
+        dbg_logn("frame", frame_count);
+    }
 }
 
 /* ==================== Input ==================== */
@@ -281,21 +341,30 @@ static void poll_input(void)
 
 void DG_Init(void)
 {
+    dbg_log("DG_Init: start");
+
     setup_callbacks();
+    dbg_log("DG_Init: callbacks OK");
+
     scePowerSetClockFrequency(333, 333, 166);
+    dbg_log("DG_Init: clock 333 OK");
 
     sceCtrlSetSamplingCycle(0);
     sceCtrlSetSamplingMode(PSP_CTRL_MODE_ANALOG);
     memset(&pad_prev, 0, sizeof(pad_prev));
     pad_initialized = 0;
+    dbg_log("DG_Init: ctrl OK");
 
     gu_init();
+    dbg_log("DG_Init: done");
 }
 
 void DG_DrawFrame(void)
 {
     if (!running)
     {
+        dbg_log("DG_DrawFrame: exit requested");
+        dbg_close();
         sceKernelExitGame();
         return;
     }
@@ -338,8 +407,13 @@ int main(int argc, char **argv)
 {
     static char *default_argv[4];
     static int default_argc = 3;
-    const char *found_path = "chex.wad";
+    const char *found_path = NULL;
     int i;
+
+    /* Init debug log FIRST */
+    dbg_init();
+    dbg_log("=== Chex Quest PSP starting ===");
+    dbg_logn("argc", argc);
 
     const char *search_paths[] = {
         "ms0:/PSP/GAME/ChexQuest/chex.wad",
@@ -349,6 +423,7 @@ int main(int argc, char **argv)
         NULL
     };
 
+    dbg_log("Searching for WAD file...");
     for (i = 0; search_paths[i] != NULL; i++)
     {
         FILE *test = fopen(search_paths[i], "rb");
@@ -356,8 +431,22 @@ int main(int argc, char **argv)
         {
             fclose(test);
             found_path = search_paths[i];
+            dbg_log2("WAD FOUND", found_path);
             break;
         }
+        else
+        {
+            dbg_log2("WAD not at", search_paths[i]);
+        }
+    }
+
+    if (found_path == NULL)
+    {
+        dbg_log("ERROR: WAD file not found anywhere!");
+        dbg_close();
+        sceKernelDelayThread(3000000);
+        sceKernelExitGame();
+        return 1;
     }
 
     default_argv[0] = "chexquest";
@@ -365,14 +454,20 @@ int main(int argc, char **argv)
     default_argv[2] = (char *)found_path;
     default_argv[3] = NULL;
 
+    dbg_log("Calling doomgeneric_Create...");
+
     if (argc < 2)
         doomgeneric_Create(default_argc, default_argv);
     else
         doomgeneric_Create(argc, argv);
 
+    dbg_log("doomgeneric_Create done, entering main loop");
+
     while (running)
         doomgeneric_Tick();
 
+    dbg_log("Main loop ended, shutting down");
+    dbg_close();
     sceGuTerm();
     sceKernelExitGame();
     return 0;
