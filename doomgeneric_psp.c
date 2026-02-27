@@ -12,7 +12,6 @@
 #include <pspgum.h>
 #include <psppower.h>
 #include <psprtc.h>
-#include <pspdmac.h>
 
 #include <string.h>
 #include <stdio.h>
@@ -62,8 +61,8 @@ static void setup_callbacks(void)
 
 /* ==================== GU / Display ==================== */
 
-static unsigned int __attribute__((aligned(16))) gu_list[262144];
-static unsigned int __attribute__((aligned(16))) tex_buf[512 * 512];
+static uint32_t __attribute__((aligned(16))) gu_list[262144];
+static uint32_t __attribute__((aligned(16))) tex_buf[512 * 512];
 static void *vram_base = NULL;
 
 typedef struct {
@@ -73,7 +72,7 @@ typedef struct {
 
 static void gu_init(void)
 {
-    vram_base = (void *)(0x40000000);  /* Uncached VRAM pointer */
+    vram_base = (void *)(0x40000000);
 
     sceGuInit();
     sceGuStart(GU_DIRECT, gu_list);
@@ -116,7 +115,6 @@ static void draw_framebuffer(void)
     if (!DG_ScreenBuffer)
         return;
 
-    /* Clamp source dimensions to screen/texture limits */
     src_w = DOOMGENERIC_RESX;
     src_h = DOOMGENERIC_RESY;
     if (src_w > SCR_W) src_w = SCR_W;
@@ -127,7 +125,7 @@ static void draw_framebuffer(void)
     /* DoomGeneric: XRGB 0x00RRGGBB  ->  PSP GU: ABGR 0xFFBBGGRR */
     for (y = 0; y < src_h; y++)
     {
-        const uint32_t *src = &DG_ScreenBuffer[y * DOOMGENERIC_RESX];
+        const uint32_t *src = (const uint32_t *)&DG_ScreenBuffer[y * DOOMGENERIC_RESX];
         uint32_t *dst = &tex_buf[y * 512];
         for (x = 0; x < src_w; x++)
         {
@@ -146,7 +144,6 @@ static void draw_framebuffer(void)
 
     sceGuTexImage(0, 512, 512, 512, tex_buf);
 
-    /* Draw in horizontal strips of 64 pixels to avoid texture cache issues */
     {
         int strip_w = 64;
         int sx;
@@ -156,7 +153,6 @@ static void draw_framebuffer(void)
             if (sx + sw > src_w)
                 sw = src_w - sx;
 
-            /* Scale strip coordinates to screen */
             short dx0 = (short)((sx * SCR_W) / src_w);
             short dx1 = (short)(((sx + sw) * SCR_W) / src_w);
 
@@ -205,7 +201,7 @@ static void keyq_push(int pressed, unsigned char doomkey)
 {
     int next = (keyq_head + 1) % KEYQ_SIZE;
     if (next == keyq_tail)
-        return;  /* Queue full, drop event */
+        return;
     keyq[keyq_head].pressed = (unsigned char)pressed;
     keyq[keyq_head].key = doomkey;
     keyq_head = next;
@@ -220,8 +216,7 @@ static void check_btn(uint32_t old_b, uint32_t new_b,
     if (!now && was)  keyq_push(0, doomkey);
 }
 
-/* Analog stick state tracking to avoid repeated key events */
-static int analog_state[4] = {0, 0, 0, 0};  /* left, right, up, down */
+static int analog_state[4] = {0, 0, 0, 0};
 
 static void poll_input(void)
 {
@@ -232,7 +227,6 @@ static void poll_input(void)
 
     sceCtrlPeekBufferPositive(&pad, 1);
 
-    /* First poll: initialize prev state, emit no events */
     if (!pad_initialized)
     {
         pad_prev = pad;
@@ -243,7 +237,6 @@ static void poll_input(void)
     uint32_t ob = pad_prev.Buttons;
     uint32_t nb = pad.Buttons;
 
-    /* Digital buttons */
     check_btn(ob, nb, PSP_CTRL_UP,       KEY_UPARROW);
     check_btn(ob, nb, PSP_CTRL_DOWN,     KEY_DOWNARROW);
     check_btn(ob, nb, PSP_CTRL_LEFT,     KEY_LEFTARROW);
@@ -257,11 +250,9 @@ static void poll_input(void)
     check_btn(ob, nb, PSP_CTRL_START,    KEY_ESCAPE);
     check_btn(ob, nb, PSP_CTRL_SELECT,   KEY_TAB);
 
-    /* Analog stick with proper state tracking */
     ax = (int)pad.Lx - 128;
     ay = (int)pad.Ly - 128;
 
-    /* Left */
     state = (ax < -thr) ? 1 : 0;
     if (state != analog_state[0])
     {
@@ -269,7 +260,6 @@ static void poll_input(void)
         analog_state[0] = state;
     }
 
-    /* Right */
     state = (ax > thr) ? 1 : 0;
     if (state != analog_state[1])
     {
@@ -277,7 +267,6 @@ static void poll_input(void)
         analog_state[1] = state;
     }
 
-    /* Up */
     state = (ay < -thr) ? 1 : 0;
     if (state != analog_state[2])
     {
@@ -285,7 +274,6 @@ static void poll_input(void)
         analog_state[2] = state;
     }
 
-    /* Down */
     state = (ay > thr) ? 1 : 0;
     if (state != analog_state[3])
     {
@@ -332,7 +320,7 @@ uint32_t DG_GetTicksMs(void)
     uint64_t tick;
     uint32_t res;
     sceRtcGetCurrentTick(&tick);
-    res = sceRtcGetTickResolution();  /* ticks per second */
+    res = sceRtcGetTickResolution();
     return (uint32_t)(tick / (res / 1000u));
 }
 
@@ -355,7 +343,6 @@ void DG_SetWindowTitle(const char *title)
 
 int main(int argc, char **argv)
 {
-    /* Default args: load chex.wad from current directory */
     static char *default_argv[] = {
         "chexquest",
         "-iwad", "chex.wad",
