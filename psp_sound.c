@@ -47,7 +47,6 @@
 
 /* ==================== OPL2 Tables (Hardware Accurate) ==================== */
 
-/* Log-sin table: 256 entries */
 static const uint16_t logsin_table[256] = {
     2137, 1731, 1543, 1419, 1326, 1252, 1190, 1137,
     1091, 1050, 1013,  979,  949,  920,  894,  869,
@@ -83,7 +82,6 @@ static const uint16_t logsin_table[256] = {
        0,    0,    0,    0,    0,    0,    0,    0
 };
 
-/* Exponential table: 256 entries */
 static const uint16_t exp_table[256] = {
     1018, 1013, 1007, 1002,  996,  991,  986,  980,
      975,  969,  964,  959,  953,  948,  943,  938,
@@ -119,17 +117,14 @@ static const uint16_t exp_table[256] = {
      176,  174,  173,  171,  169,  167,  166,  164
 };
 
-/* Frequency multiplier table (x2 of real values) */
 static const uint8_t mt[16] = {
     1, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 20, 24, 24, 30, 30
 };
 
-/* Key scale level table */
 static const uint8_t ksl_table[16] = {
     0, 32, 40, 45, 48, 51, 53, 55, 56, 58, 59, 60, 61, 62, 63, 64
 };
 
-/* F-Number table per ogni nota (C to B), block=4 */
 static const uint16_t fnumber[12] = {
     0x157, 0x16B, 0x181, 0x198, 0x1B0, 0x1CA,
     0x1E5, 0x202, 0x220, 0x241, 0x263, 0x287
@@ -138,7 +133,6 @@ static const uint16_t fnumber[12] = {
 /* ==================== OPL2 Operator ==================== */
 
 typedef struct {
-    /* Registri programmabili */
     uint8_t     mult;
     uint8_t     ksr;
     uint8_t     egt;
@@ -152,7 +146,6 @@ typedef struct {
     uint8_t     rr;
     uint8_t     ws;
 
-    /* Stato runtime */
     uint32_t    phase;
     uint32_t    phase_inc;
     int32_t     env;
@@ -178,13 +171,10 @@ typedef struct {
 
 typedef struct {
     opl_channel_t   chan[OPL_NUM_CHANNELS];
-
     uint8_t         trem_depth;
     uint8_t         vib_depth;
     uint32_t        trem_phase;
     uint32_t        vib_phase;
-
-    /* Resampling: accumulatore OPL->OUTPUT */
     uint32_t        resamp_accum;
     int32_t         last_sample;
 } opl_chip_t;
@@ -227,7 +217,6 @@ static int genmidi_loaded = 0;
 #define MAX_MIDI_EVENTS     65536
 #define MAX_VOICES          9
 
-/* Tipo evento interno */
 #define MIDI_EV_NOTEON      0x90
 #define MIDI_EV_NOTEOFF     0x80
 #define MIDI_EV_CONTROL     0xB0
@@ -241,7 +230,7 @@ typedef struct {
     uint8_t     channel;
     uint8_t     data1;
     uint8_t     data2;
-    uint32_t    data32;   /* usato per tempo (us_per_beat) */
+    uint32_t    data32;
 } midi_event_t;
 
 typedef struct {
@@ -268,24 +257,16 @@ typedef struct {
     int             current_event;
     uint16_t        ticks_per_beat;
     uint32_t        us_per_beat;
-
-    /* Timing: usiamo interi per evitare drift floating point */
-    /* samples_per_tick = (us_per_beat * OUTPUT_RATE) / (ticks_per_beat * 1000000) */
-    /* Rappresentiamo come frazione: num/den */
-    uint64_t        spt_num;      /* numeratore samples_per_tick */
-    uint64_t        spt_den;      /* denominatore samples_per_tick */
-    uint64_t        tick_frac;    /* accumulatore frazionario (in unita' spt_den) */
-
+    uint64_t        spt_num;
+    uint64_t        spt_den;
+    uint64_t        tick_frac;
     uint32_t        current_tick;
     uint32_t        voice_age;
-
     midi_channel_t  chan[MIDI_CHANNELS];
     voice_t         voices[MAX_VOICES];
-
     int             playing;
     int             looping;
     int             volume;
-
     void           *midi_data;
     int             midi_data_len;
 } midi_state_t;
@@ -312,15 +293,25 @@ static SceUID        snd_thread_id = -1;
 static int           next_handle   = 1;
 static int           sfx_volume    = 127;
 
-/* Cache lump SFX */
 static void         *sfx_cache[2048];
 static int           sfx_cache_init = 0;
 
-/* Buffer di mix allineato per DMA PSP */
 static int16_t __attribute__((aligned(64))) mix_buffer[MIX_SAMPLES * 2];
 
-/* Mutex per proteggere accesso a canali SFX dal thread principale */
-static SceUID sfx_mutex = -1;
+/* Semaforo per proteggere accesso ai canali SFX */
+static SceUID sfx_sema = -1;
+
+static void sfx_lock(void)
+{
+    if (sfx_sema >= 0)
+        sceKernelWaitSema(sfx_sema, 1, NULL);
+}
+
+static void sfx_unlock(void)
+{
+    if (sfx_sema >= 0)
+        sceKernelSignalSema(sfx_sema, 1);
+}
 
 /* ==================== OPL2 Implementation ==================== */
 
@@ -339,7 +330,6 @@ static void opl_reset(void)
         }
 }
 
-/* Calcola rate effettivo per envelope */
 static int calc_rate(int rate, int ksr, int block, int fnum)
 {
     int rof, eff;
@@ -357,17 +347,15 @@ static int calc_rate(int rate, int ksr, int block, int fnum)
     return eff;
 }
 
-/* Aggiorna envelope di un operatore per un sample OPL */
 static void opl_envelope_calc(opl_op_t *op, int block, int fnum)
 {
-    int rate, eff;
+    int eff, rate;
 
     switch (op->eg_state)
     {
     case EG_ATTACK:
         if (op->ar == 0)
             return;
-
         if (op->ar == 15)
         {
             op->env      = 0;
@@ -376,9 +364,9 @@ static void opl_envelope_calc(opl_op_t *op, int block, int fnum)
         }
 
         eff  = calc_rate(op->ar, op->ksr, block, fnum);
-        /* Curva di attacco esponenziale: env -= env*rate/32 + 1 */
-        rate = (eff < 60) ? (eff >> 2) : 15;
-        op->env -= ((op->env >> (5 - (rate >> 2))) | 1);
+        rate = eff >> 2;
+        if (rate > 12) rate = 12;
+        op->env -= ((op->env >> (5 - (rate > 4 ? 4 : rate))) | 1);
 
         if (op->env <= 0)
         {
@@ -396,7 +384,6 @@ static void opl_envelope_calc(opl_op_t *op, int block, int fnum)
         }
 
         eff = calc_rate(op->dr, op->ksr, block, fnum);
-        /* Decremento lineare (in unita' di 1/8 dB) */
         op->env += 1 + (eff >> 2);
 
         if (op->env >= (op->sl << 5))
@@ -408,9 +395,7 @@ static void opl_envelope_calc(opl_op_t *op, int block, int fnum)
 
     case EG_SUSTAIN:
         if (op->egt)
-            return;   /* Sustain: mantieni livello */
-
-        /* Senza EGT, decade come release */
+            return;
         if (op->rr == 0)
             return;
 
@@ -449,29 +434,23 @@ static void opl_envelope_calc(opl_op_t *op, int block, int fnum)
     }
 }
 
-/* Calcola output di un operatore */
 static int32_t opl_operator_calc(opl_op_t *op, int32_t phase_mod,
                                   int32_t trem, int32_t vol_atten)
 {
     uint32_t  phase;
-    int32_t   atten;
-    int32_t   output;
+    int32_t   atten, output;
     uint16_t  log_value;
-    int       neg;
-    int       exp_index, exp_shift;
+    int       neg, exp_index, exp_shift;
     uint8_t   ph8;
 
-    /* Fase 10 bit (0-1023) */
     phase = ((op->phase >> 10) + (uint32_t)(phase_mod >> 10)) & 0x3FF;
 
-    /* Attenuazione totale in unita' log */
     atten = op->env + (op->tl << 3) + op->ksl_add + vol_atten;
     if (op->am)
         atten += trem;
     if (atten > 511) atten = 511;
     if (atten >= 511) return 0;
 
-    /* Waveform */
     neg = 0;
     ph8 = phase & 0xFF;
 
@@ -482,18 +461,15 @@ static int32_t opl_operator_calc(opl_op_t *op, int32_t phase_mod,
         log_value = (phase & 0x100) ? logsin_table[~ph8 & 0xFF]
                                     : logsin_table[ph8];
         break;
-
     case WF_HALFSINE:
         if (phase & 0x200) return 0;
         log_value = (phase & 0x100) ? logsin_table[~ph8 & 0xFF]
                                     : logsin_table[ph8];
         break;
-
     case WF_ABSSINE:
         log_value = (phase & 0x100) ? logsin_table[~ph8 & 0xFF]
                                     : logsin_table[ph8];
         break;
-
     case WF_QUARTERSINE:
     default:
         if (phase & 0x100) return 0;
@@ -510,11 +486,9 @@ static int32_t opl_operator_calc(opl_op_t *op, int32_t phase_mod,
         return 0;
 
     output = (exp_table[exp_index] << 1) >> exp_shift;
-
     return neg ? -output : output;
 }
 
-/* Aggiorna phase accumulator di un operatore */
 static void opl_phase_calc(opl_op_t *op, int fnum, int block, int32_t vib)
 {
     uint32_t freq;
@@ -523,19 +497,15 @@ static void opl_phase_calc(opl_op_t *op, int fnum, int block, int32_t vib)
     if (op->vib)
     {
         fn += vib;
-        if (fn < 0)   fn = 0;
-        if (fn > 0x3FF) fn = 0x3FF;
+        if (fn < 0)      fn = 0;
+        if (fn > 0x3FF)  fn = 0x3FF;
     }
 
-    /* phase_inc = fnum * 2^block * MULT / 2
-     * Il fattore /2 e' inglobato nel fatto che mt[] = real_mult * 2
-     * e noi shiftiamo di 1 in meno dopo */
     freq = (uint32_t)fn << block;
     op->phase_inc = freq * mt[op->mult];
     op->phase    += op->phase_inc;
 }
 
-/* Genera un sample OPL (a OPL_RATE) */
 static int32_t opl_generate(void)
 {
     int     ch;
@@ -543,25 +513,19 @@ static int32_t opl_generate(void)
     int32_t trem, vib;
     uint32_t tp, vp;
 
-    /* Aggiorna LFO tremolo (~3.7 Hz a 49716 Hz)
-     * trem_phase e' un contatore 0..1023 */
-    opl.trem_phase += 1;
-    if (opl.trem_phase >= 210)   /* 49716/210 ~ 236 Hz? no: usiamo periodo corretto */
+    opl.trem_phase++;
+    if (opl.trem_phase >= 210)
         opl.trem_phase = 0;
 
-    /* Periodo tremolo: 49716 / 3.7 ≈ 13437 campioni
-     * Usiamo un contatore a 24 bit con incremento appropriato */
-    /* Riscriviamo con contatori separati a 16 bit */
-    /* trem: 0..52 (dB/8 units) */
     tp   = (opl.trem_phase * 256) / 210;
     trem = (tp < 128) ? (tp >> 2) : ((255 - tp) >> 2);
     if (!opl.trem_depth)
         trem >>= 2;
 
-    /* Vibrato ~6.1 Hz */
-    opl.vib_phase += 1;
+    opl.vib_phase++;
     if (opl.vib_phase >= 8192)
         opl.vib_phase = 0;
+
     vp  = opl.vib_phase;
     vib = (int32_t)(vp & 0x7FF);
     if (vp & 0x1000) vib = -vib;
@@ -569,7 +533,6 @@ static int32_t opl_generate(void)
     if (!opl.vib_depth)
         vib >>= 1;
 
-    /* Processa ogni canale */
     for (ch = 0; ch < OPL_NUM_CHANNELS; ch++)
     {
         opl_channel_t *c   = &opl.chan[ch];
@@ -582,33 +545,26 @@ static int32_t opl_generate(void)
 
         opl_envelope_calc(mod, c->block, c->fnum);
         opl_envelope_calc(car, c->block, c->fnum);
-
         opl_phase_calc(mod, c->fnum, c->block, vib);
         opl_phase_calc(car, c->fnum, c->block, vib);
 
-        /* Feedback: media degli ultimi 2 output del modulatore */
         if (c->fb > 0)
             feedback = (c->fb_out[0] + c->fb_out[1]) >> (9 - c->fb);
         else
             feedback = 0;
 
-        /* Modulatore */
         mod_out = opl_operator_calc(mod, feedback << 10, trem, 0);
-
         c->fb_out[1] = c->fb_out[0];
         c->fb_out[0] = mod_out;
 
-        /* Carrier */
         if (c->cnt == 0)
         {
-            /* FM: mod modula car */
             phase_mod = mod_out << 1;
             car_out   = opl_operator_calc(car, phase_mod, trem, c->vol_atten);
             output   += car_out;
         }
         else
         {
-            /* Additivo */
             car_out  = opl_operator_calc(car, 0, trem, c->vol_atten);
             output  += mod_out + car_out;
         }
@@ -617,15 +573,9 @@ static int32_t opl_generate(void)
     output >>= 1;
     if (output >  32767) output =  32767;
     if (output < -32768) output = -32768;
-
     return output;
 }
 
-/* Genera un sample a OUTPUT_RATE tramite decimazione di OPL_RATE
- * CORRETTO: per ogni sample OUTPUT dobbiamo consumare
- * OPL_RATE/OUTPUT_RATE campioni OPL (~1.13 per 49716/44100).
- * Usiamo un accumulatore intero: ogni volta che accum >= OUTPUT_RATE
- * generiamo un nuovo campione OPL e sottraiamo OUTPUT_RATE. */
 static int32_t opl_generate_resampled(void)
 {
     int32_t sample;
@@ -642,7 +592,6 @@ static int32_t opl_generate_resampled(void)
     return sample;
 }
 
-/* Key on */
 static void opl_key_on(int ch)
 {
     opl_channel_t *c = &opl.chan[ch];
@@ -660,7 +609,6 @@ static void opl_key_on(int ch)
     c->fb_out[1] = 0;
 }
 
-/* Key off */
 static void opl_key_off(int ch)
 {
     opl_channel_t *c = &opl.chan[ch];
@@ -675,7 +623,6 @@ static void opl_key_off(int ch)
     }
 }
 
-/* Imposta frequenza */
 static void opl_set_frequency(int ch, int fnum, int block)
 {
     opl_channel_t *c = &opl.chan[ch];
@@ -692,7 +639,6 @@ static void opl_set_frequency(int ch, int fnum, int block)
     c->op[1].ksl_add = (c->op[1].ksl > 0) ? (ksl_base >> (3 - c->op[1].ksl)) : 0;
 }
 
-/* Programma un operatore da dati GENMIDI */
 static void opl_program_operator(opl_op_t *op, const genmidi_op_t *data)
 {
     op->am   = (data->mult_ksr_egt_vib_am >> 7) & 1;
@@ -700,20 +646,15 @@ static void opl_program_operator(opl_op_t *op, const genmidi_op_t *data)
     op->egt  = (data->mult_ksr_egt_vib_am >> 5) & 1;
     op->ksr  = (data->mult_ksr_egt_vib_am >> 4) & 1;
     op->mult = (data->mult_ksr_egt_vib_am)       & 0x0F;
-
     op->ksl  = (data->ksl_tl >> 6) & 3;
     op->tl   = (data->ksl_tl)      & 0x3F;
-
     op->ar   = (data->ar_dr >> 4) & 0x0F;
     op->dr   = (data->ar_dr)      & 0x0F;
-
     op->sl   = (data->sl_rr >> 4) & 0x0F;
     op->rr   = (data->sl_rr)      & 0x0F;
-
     op->ws   = (data->ws) & 0x03;
 }
 
-/* Programma un canale OPL da una voce GENMIDI */
 static void opl_program_voice(int ch, const genmidi_voice_t *voice)
 {
     opl_channel_t *c = &opl.chan[ch];
@@ -792,19 +733,15 @@ static void midi_note_off(int ch, int note);
 
 static int alloc_voice(int midi_ch, int note)
 {
-    int      i;
-    int      steal     = -1;
-    int      off_voice = -1;
-    uint32_t oldest_age = 0;
+    int      i, steal = -1, off_voice = -1;
+    uint32_t oldest_age;
 
     (void)note;
 
-    /* 1) Cerca voce libera */
     for (i = 0; i < MAX_VOICES; i++)
         if (!midi.voices[i].active)
             return i;
 
-    /* 2) Cerca voce dello stesso canale in release */
     for (i = 0; i < MAX_VOICES; i++)
     {
         if (midi.voices[i].active && midi.voices[i].midi_ch == midi_ch)
@@ -824,7 +761,6 @@ static int alloc_voice(int midi_ch, int note)
         return off_voice;
     }
 
-    /* 3) Ruba la voce piu' vecchia */
     oldest_age = 0xFFFFFFFF;
     for (i = 0; i < MAX_VOICES; i++)
     {
@@ -859,7 +795,6 @@ static void midi_note_on(int ch, int note, int velocity)
     if (genmidi_loaded != 1)
         return;
 
-    /* Seleziona strumento */
     if (midi.chan[ch].is_drum)
     {
         instr_idx = 128 + (note - 35);
@@ -880,36 +815,31 @@ static void midi_note_on(int ch, int note, int velocity)
 
     opl_program_voice(slot, &instr->voice[0]);
 
-    /* Calcola nota reale */
     if (instr->flags & GENMIDI_FLAG_FIXED)
         real_note = instr->fixed_note;
     else
         real_note = note;
 
-    /* Fine tuning: centro=128, ogni semitono = 64 unita' */
     if (instr->fine_tuning != 128)
     {
         int offset = (int)instr->fine_tuning - 128;
-        real_note += offset / 32;   /* approssimazione semitoni */
+        real_note += offset / 32;
     }
 
     if (real_note < 0)   real_note = 0;
     if (real_note > 127) real_note = 127;
 
-    /* Block = ottava (1-7), fnum = indice cromatico */
     block = (real_note / 12) - 1;
     if (block < 1) block = 1;
     if (block > 7) block = 7;
 
     fnum = fnumber[real_note % 12];
 
-    /* Volume: velocity * ch_volume * expression -> attenuazione OPL */
     combined_vol = (velocity * midi.chan[ch].volume * midi.chan[ch].expression)
                    / (127 * 127);
     if (combined_vol > 127) combined_vol = 127;
     if (combined_vol < 0)   combined_vol = 0;
 
-    /* Mappa 0-127 -> attenuazione OPL 0-47 (piu' sensibile ai valori alti) */
     vol_atten = ((127 - combined_vol) * 47) / 127;
 
     opl.chan[slot].vol_atten = vol_atten;
@@ -917,12 +847,12 @@ static void midi_note_on(int ch, int note, int velocity)
     opl_set_frequency(slot, fnum, block);
     opl_key_on(slot);
 
-    midi.voices[slot].active  = 1;
-    midi.voices[slot].midi_ch = ch;
-    midi.voices[slot].note    = note;
-    midi.voices[slot].opl_ch  = slot;
-    midi.voices[slot].velocity= velocity;
-    midi.voices[slot].age     = midi.voice_age++;
+    midi.voices[slot].active   = 1;
+    midi.voices[slot].midi_ch  = ch;
+    midi.voices[slot].note     = note;
+    midi.voices[slot].opl_ch   = slot;
+    midi.voices[slot].velocity = velocity;
+    midi.voices[slot].age      = midi.voice_age++;
 }
 
 static void midi_note_off(int ch, int note)
@@ -955,16 +885,16 @@ static void midi_control_change(int ch, int cc, int val)
     case 11:
         midi.chan[ch].expression = val;
         break;
-    case 64:   /* Sustain pedal - ignoriamo */
+    case 64:
         break;
-    case 121:  /* Reset controllers */
-        midi.chan[ch].volume      = 100;
-        midi.chan[ch].pan         = 64;
-        midi.chan[ch].expression  = 127;
-        midi.chan[ch].pitch_bend  = 0;
+    case 121:
+        midi.chan[ch].volume     = 100;
+        midi.chan[ch].pan        = 64;
+        midi.chan[ch].expression = 127;
+        midi.chan[ch].pitch_bend = 0;
         break;
-    case 120:  /* All sound off */
-    case 123:  /* All notes off */
+    case 120:
+    case 123:
         for (i = 0; i < MAX_VOICES; i++)
         {
             if (midi.voices[i].active && midi.voices[i].midi_ch == ch)
@@ -982,11 +912,8 @@ static void midi_program_change(int ch, int prog)
     midi.chan[ch].program = prog & 0x7F;
 }
 
-/* ==================== Timing helpers ==================== */
+/* ==================== Timing ==================== */
 
-/* Aggiorna samples_per_tick come frazione intera
- * spt = (us_per_beat * OUTPUT_RATE) / (ticks_per_beat * 1000000)
- * Rappresentiamo come spt_num/spt_den dove spt_den = ticks_per_beat * 1000000 */
 static void midi_update_timing(void)
 {
     if (midi.ticks_per_beat == 0)
@@ -1010,8 +937,8 @@ static uint32_t read_var(const uint8_t *data, int *pos, int end)
     for (i = 0; i < 4; i++)
     {
         if (*pos >= end) break;
-        b    = data[(*pos)++];
-        val  = (val << 7) | (b & 0x7F);
+        b   = data[(*pos)++];
+        val = (val << 7) | (b & 0x7F);
         if (!(b & 0x80)) break;
     }
     return val;
@@ -1022,28 +949,24 @@ static int parse_midi(const uint8_t *data, int len)
     int      pos, tracks, track;
     uint16_t division;
 
-    midi.num_events    = 0;
+    midi.num_events     = 0;
     midi.ticks_per_beat = 140;
     midi.us_per_beat    = 500000;
 
     if (len < 14 || memcmp(data, "MThd", 4) != 0)
         return 0;
 
-    /* Header chunk size */
     pos = 8;
-
-    /* Format (ignoriamo, trattiamo tutto come format 0/1) */
-    pos += 2;
+    pos += 2;   /* format */
 
     tracks   = (data[pos] << 8) | data[pos+1]; pos += 2;
     division = (data[pos] << 8) | data[pos+1]; pos += 2;
 
     if (division & 0x8000)
-        midi.ticks_per_beat = 140;   /* SMPTE non supportato */
+        midi.ticks_per_beat = 140;
     else
         midi.ticks_per_beat = (division > 0) ? division : 140;
 
-    /* Alloca eventi se non gia' fatto */
     if (!midi.events)
     {
         midi.events = (midi_event_t *)malloc(MAX_MIDI_EVENTS * sizeof(midi_event_t));
@@ -1051,7 +974,6 @@ static int parse_midi(const uint8_t *data, int len)
             return 0;
     }
 
-    /* Parsifica ogni traccia */
     for (track = 0; track < tracks && pos < len; track++)
     {
         int      track_len, track_end;
@@ -1061,11 +983,9 @@ static int parse_midi(const uint8_t *data, int len)
         if (pos + 8 > len) break;
         if (memcmp(&data[pos], "MTrk", 4) != 0)
         {
-            /* Salta chunk sconosciuto */
             int skip = (data[pos+4]<<24)|(data[pos+5]<<16)|
                        (data[pos+6]<<8)|data[pos+7];
             pos += 8 + skip;
-            track--;
             continue;
         }
 
@@ -1086,25 +1006,19 @@ static int parse_midi(const uint8_t *data, int len)
 
             if (pos >= track_end) break;
 
-            /* Running status */
             if (data[pos] & 0x80)
             {
                 running = data[pos];
                 pos++;
             }
 
-            /* I messaggi SysEx e Meta resettano il running status */
-            if (running == 0xF0 || running == 0xFF)
-                status = running;
-            else
-                status = running;
-
-            type = status & 0xF0;
-            ch   = status & 0x0F;
+            status = running;
+            type   = status & 0xF0;
+            ch     = status & 0x0F;
 
             switch (type)
             {
-            case 0x80:   /* Note off */
+            case 0x80:
                 if (pos + 1 < track_end)
                 {
                     ev = &midi.events[midi.num_events++];
@@ -1113,10 +1027,11 @@ static int parse_midi(const uint8_t *data, int len)
                     ev->channel = ch;
                     ev->data1   = data[pos++];
                     ev->data2   = data[pos++];
+                    ev->data32  = 0;
                 }
                 break;
 
-            case 0x90:   /* Note on */
+            case 0x90:
                 if (pos + 1 < track_end)
                 {
                     ev = &midi.events[midi.num_events++];
@@ -1125,14 +1040,15 @@ static int parse_midi(const uint8_t *data, int len)
                     ev->channel = ch;
                     ev->data1   = data[pos++];
                     ev->data2   = data[pos++];
+                    ev->data32  = 0;
                 }
                 break;
 
-            case 0xA0:   /* Polyphonic aftertouch */
-                if (pos + 1 < track_end) { pos += 2; }
+            case 0xA0:
+                if (pos + 1 < track_end) pos += 2;
                 break;
 
-            case 0xB0:   /* Control change */
+            case 0xB0:
                 if (pos + 1 < track_end)
                 {
                     ev = &midi.events[midi.num_events++];
@@ -1141,10 +1057,11 @@ static int parse_midi(const uint8_t *data, int len)
                     ev->channel = ch;
                     ev->data1   = data[pos++];
                     ev->data2   = data[pos++];
+                    ev->data32  = 0;
                 }
                 break;
 
-            case 0xC0:   /* Program change */
+            case 0xC0:
                 if (pos < track_end)
                 {
                     ev = &midi.events[midi.num_events++];
@@ -1153,14 +1070,15 @@ static int parse_midi(const uint8_t *data, int len)
                     ev->channel = ch;
                     ev->data1   = data[pos++];
                     ev->data2   = 0;
+                    ev->data32  = 0;
                 }
                 break;
 
-            case 0xD0:   /* Channel pressure */
+            case 0xD0:
                 if (pos < track_end) pos++;
                 break;
 
-            case 0xE0:   /* Pitch bend */
+            case 0xE0:
                 if (pos + 1 < track_end)
                 {
                     ev = &midi.events[midi.num_events++];
@@ -1169,10 +1087,11 @@ static int parse_midi(const uint8_t *data, int len)
                     ev->channel = ch;
                     ev->data1   = data[pos++];
                     ev->data2   = data[pos++];
+                    ev->data32  = 0;
                 }
                 break;
 
-            case 0xF0:   /* System / Meta */
+            case 0xF0:
                 if (status == 0xFF)
                 {
                     uint8_t  meta;
@@ -1189,7 +1108,6 @@ static int parse_midi(const uint8_t *data, int len)
                                           (uint32_t)data[pos+2];
                         if (tempo == 0) tempo = 500000;
 
-                        /* Salva evento di cambio tempo */
                         ev = &midi.events[midi.num_events++];
                         ev->tick    = abs_tick;
                         ev->type    = MIDI_EV_TEMPO;
@@ -1205,7 +1123,7 @@ static int parse_midi(const uint8_t *data, int len)
                     }
 
                     pos += mlen;
-                    running = 0;   /* Meta resetta running status */
+                    running = 0;
                 }
                 else if (status == 0xF0 || status == 0xF7)
                 {
@@ -1213,10 +1131,14 @@ static int parse_midi(const uint8_t *data, int len)
                     pos += slen;
                     running = 0;
                 }
+                else
+                {
+                    /* Unknown Fx status, skip */
+                    pos++;
+                }
                 break;
 
             default:
-                /* Byte sconosciuto: salta */
                 pos++;
                 break;
             }
@@ -1230,7 +1152,6 @@ track_done:
     return midi.num_events;
 }
 
-/* Insertion sort (stabile) sugli eventi per tick crescente */
 static void sort_events(void)
 {
     int          i, j;
@@ -1249,7 +1170,6 @@ static void sort_events(void)
     }
 }
 
-/* Processa un evento MIDI */
 static void process_event(const midi_event_t *ev)
 {
     int ch = ev->channel;
@@ -1279,7 +1199,6 @@ static void process_event(const midi_event_t *ev)
     }
 }
 
-/* Avanza il sequencer MIDI di 'samples' campioni OUTPUT */
 static void midi_advance(int samples)
 {
     int i;
@@ -1287,15 +1206,13 @@ static void midi_advance(int samples)
     if (!midi.playing || midi.num_events == 0)
         return;
 
-    /* tick_frac e' in unita' spt_den per evitare floating point */
     midi.tick_frac += (uint64_t)samples * midi.spt_den;
 
     while (midi.tick_frac >= midi.spt_num)
     {
-        midi.tick_frac  -= midi.spt_num;
+        midi.tick_frac -= midi.spt_num;
         midi.current_tick++;
 
-        /* Esegui tutti gli eventi al tick corrente */
         while (midi.current_event < midi.num_events &&
                midi.events[midi.current_event].tick <= midi.current_tick)
         {
@@ -1303,7 +1220,6 @@ static void midi_advance(int samples)
             midi.current_event++;
         }
 
-        /* Fine brano */
         if (midi.current_event >= midi.num_events)
         {
             if (midi.looping)
@@ -1312,7 +1228,6 @@ static void midi_advance(int samples)
                 midi.current_tick  = 0;
                 midi.tick_frac     = 0;
 
-                /* Silenzia tutte le voci */
                 for (i = 0; i < MAX_VOICES; i++)
                 {
                     if (midi.voices[i].active)
@@ -1320,14 +1235,12 @@ static void midi_advance(int samples)
                     midi.voices[i].active = 0;
                 }
 
-                /* Ripristina controller */
                 for (i = 0; i < MIDI_CHANNELS; i++)
                 {
                     midi.chan[i].volume     = 100;
                     midi.chan[i].expression = 127;
                 }
 
-                /* Ripristina tempo originale (primo evento di tipo TEMPO) */
                 midi.us_per_beat = 500000;
                 for (i = 0; i < midi.num_events; i++)
                 {
@@ -1360,20 +1273,16 @@ static int audio_thread(SceSize args, void *argp)
         int     s, c;
         int32_t left, right, sample, lv, rv;
 
-        /* Azzera buffer */
         memset(mix_buffer, 0, sizeof(mix_buffer));
 
-        /* Avanza sequencer MIDI */
         if (midi.playing)
             midi_advance(MIX_SAMPLES);
 
-        /* Genera campioni */
         for (s = 0; s < MIX_SAMPLES; s++)
         {
             left  = 0;
             right = 0;
 
-            /* Musica OPL */
             if (midi.playing)
             {
                 int32_t music = opl_generate_resampled();
@@ -1381,9 +1290,7 @@ static int audio_thread(SceSize args, void *argp)
                 right += music;
             }
 
-            /* SFX */
-            if (sfx_mutex >= 0)
-                sceKernelLockMutex(sfx_mutex, 1, NULL);
+            sfx_lock();
 
             for (c = 0; c < SND_CHANNELS; c++)
             {
@@ -1400,14 +1307,11 @@ static int audio_thread(SceSize args, void *argp)
                     continue;
                 }
 
-                /* PCM 8-bit unsigned -> signed 16-bit */
                 sample = ((int32_t)ch->data[idx] - 128) << 7;
                 ch->pos += ch->step;
 
-                /* Volume: sfx_volume e canale volume */
                 sample = (sample * ch->vol * sfx_volume) / (127 * 127);
 
-                /* Panning */
                 lv = 255 - ch->sep;
                 rv = ch->sep;
 
@@ -1415,10 +1319,8 @@ static int audio_thread(SceSize args, void *argp)
                 right += (sample * rv) >> 8;
             }
 
-            if (sfx_mutex >= 0)
-                sceKernelUnlockMutex(sfx_mutex, 1);
+            sfx_unlock();
 
-            /* Clamp */
             if (left  >  32767) left  =  32767;
             if (left  < -32768) left  = -32768;
             if (right >  32767) right =  32767;
@@ -1465,8 +1367,8 @@ void I_InitSound(boolean use_sfx_prefix)
         midi.chan[i].is_drum    = (i == 9) ? 1 : 0;
     }
 
-    /* Mutex per SFX */
-    sfx_mutex = sceKernelCreateMutex("sfx_mutex", 0, 0, NULL);
+    /* Crea semaforo binario (iniziale=1, max=1) per SFX */
+    sfx_sema = sceKernelCreateSema("sfx_sema", 0, 1, 1, NULL);
 
     psp_audio_ch = sceAudioChReserve(PSP_AUDIO_NEXT_CHANNEL,
                                       MIX_SAMPLES,
@@ -1499,10 +1401,10 @@ void I_ShutdownSound(void)
         psp_audio_ch = -1;
     }
 
-    if (sfx_mutex >= 0)
+    if (sfx_sema >= 0)
     {
-        sceKernelDeleteMutex(sfx_mutex);
-        sfx_mutex = -1;
+        sceKernelDeleteSema(sfx_sema);
+        sfx_sema = -1;
     }
 
     if (midi.midi_data)
@@ -1549,7 +1451,6 @@ int I_StartSound(sfxinfo_t *sfxinfo, int channel, int vol, int sep)
 
     data = (unsigned char *)lump;
 
-    /* Header: magic=3, rate, length */
     if ((data[0] | (data[1] << 8)) != 3)
         return -1;
 
@@ -1560,7 +1461,6 @@ int I_StartSound(sfxinfo_t *sfxinfo, int channel, int vol, int sep)
     if (length <= 8) return -1;
     length -= 8;
 
-    /* Slot */
     if (channel >= 0 && channel < SND_CHANNELS)
         slot = channel;
     else
@@ -1585,8 +1485,7 @@ int I_StartSound(sfxinfo_t *sfxinfo, int channel, int vol, int sep)
     handle = next_handle++;
     if (next_handle <= 0) next_handle = 1;
 
-    if (sfx_mutex >= 0)
-        sceKernelLockMutex(sfx_mutex, 1, NULL);
+    sfx_lock();
 
     sfx_channels[slot].data   = data + 8;
     sfx_channels[slot].length = length;
@@ -1597,8 +1496,7 @@ int I_StartSound(sfxinfo_t *sfxinfo, int channel, int vol, int sep)
     sfx_channels[slot].handle = handle;
     sfx_channels[slot].active = 1;
 
-    if (sfx_mutex >= 0)
-        sceKernelUnlockMutex(sfx_mutex, 1);
+    sfx_unlock();
 
     return handle;
 }
@@ -1607,8 +1505,7 @@ void I_StopSound(int handle)
 {
     int i;
 
-    if (sfx_mutex >= 0)
-        sceKernelLockMutex(sfx_mutex, 1, NULL);
+    sfx_lock();
 
     for (i = 0; i < SND_CHANNELS; i++)
     {
@@ -1619,8 +1516,7 @@ void I_StopSound(int handle)
         }
     }
 
-    if (sfx_mutex >= 0)
-        sceKernelUnlockMutex(sfx_mutex, 1);
+    sfx_unlock();
 }
 
 boolean I_SoundIsPlaying(int handle)
@@ -1648,8 +1544,7 @@ void I_UpdateSoundParams(int channel, int vol, int sep)
     if (sep < 0)   sep = 0;
     if (sep > 255) sep = 255;
 
-    if (sfx_mutex >= 0)
-        sceKernelLockMutex(sfx_mutex, 1, NULL);
+    sfx_lock();
 
     if (sfx_channels[channel].active)
     {
@@ -1657,8 +1552,7 @@ void I_UpdateSoundParams(int channel, int vol, int sep)
         sfx_channels[channel].sep = sep;
     }
 
-    if (sfx_mutex >= 0)
-        sceKernelUnlockMutex(sfx_mutex, 1);
+    sfx_unlock();
 }
 
 void I_PrecacheSounds(sfxinfo_t *sounds, int num_sounds)
@@ -1763,7 +1657,6 @@ void *I_RegisterSong(void *data, int len)
     if (!data || len <= 0)
         return NULL;
 
-    /* Libera dati precedenti */
     if (midi.midi_data)
     {
         free(midi.midi_data);
@@ -1774,7 +1667,6 @@ void *I_RegisterSong(void *data, int len)
     if (!genmidi_loaded)
         load_genmidi();
 
-    /* MIDI nativo */
     if (len >= 4 && memcmp(data, "MThd", 4) == 0)
     {
         midi.midi_data = malloc(len);
@@ -1785,7 +1677,6 @@ void *I_RegisterSong(void *data, int len)
     }
     else
     {
-        /* Converti MUS->MIDI */
         in = mem_fopen_read(data, len);
         if (!in) return NULL;
 
@@ -1822,7 +1713,6 @@ void *I_RegisterSong(void *data, int len)
         mem_fclose(out);
     }
 
-    /* Parsifica */
     if (parse_midi((const uint8_t *)midi.midi_data, midi.midi_data_len) <= 0)
     {
         free(midi.midi_data);
@@ -1865,7 +1755,6 @@ void I_PlaySong(void *handle, boolean looping)
     midi.looping       = looping ? 1 : 0;
     midi.voice_age     = 0;
 
-    /* Ripristina tempo al valore del primo evento di tempo (o default) */
     midi.us_per_beat = 500000;
     for (i = 0; i < midi.num_events; i++)
     {
@@ -1878,14 +1767,11 @@ void I_PlaySong(void *handle, boolean looping)
     }
     midi_update_timing();
 
-    /* Silenzia voci precedenti */
     for (i = 0; i < MAX_VOICES; i++)
         midi.voices[i].active = 0;
 
-    /* Reset OPL */
     opl_reset();
 
-    /* Reset canali MIDI */
     for (i = 0; i < MIDI_CHANNELS; i++)
     {
         midi.chan[i].volume     = 100;
