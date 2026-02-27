@@ -16,7 +16,7 @@ jobs:
     steps:
     - name: Install system deps
       run: |
-        apk add --no-cache make git bash sed
+        apk add --no-cache make git bash sed patch
 
     - name: Checkout
       uses: actions/checkout@v4
@@ -29,40 +29,98 @@ jobs:
       run: |
         cd doomgeneric/doomgeneric
 
-        # Fix boolean keyword conflict: rename false/true in enum
-        sed -i 's/^    false       = 0,/    d_false       = 0,/' doomtype.h
-        sed -i 's/^    true        = 1,/    d_true        = 1,/' doomtype.h
+        echo "=== Patching doomtype.h ==="
+        # Replace the entire boolean typedef to avoid false/true keyword clash
+        cat > /tmp/bool_patch.py << 'PYEOF'
+import re
+with open("doomtype.h", "r") as f:
+            content = f.read()
 
-        # If code uses 'boolean' type with false/true values, patch those too
-        # Most doomgeneric code uses 0/1 directly, but just in case:
-        find . -name '*.c' -exec sed -i 's/= false;/= d_false;/g' {} +
-        find . -name '*.c' -exec sed -i 's/= true;/= d_true;/g' {} +
-        find . -name '*.c' -exec sed -i 's/return false;/return d_false;/g' {} +
-        find . -name '*.c' -exec sed -i 's/return true;/return d_true;/g' {} +
-        find . -name '*.h' -exec sed -i 's/= false;/= d_false;/g' {} +
-        find . -name '*.h' -exec sed -i 's/= true;/= d_true;/g' {} +
-        find . -name '*.h' -exec sed -i 's/return false;/return d_false;/g' {} +
-        find . -name '*.h' -exec sed -i 's/return true;/return d_true;/g' {} +
+        # Remove the enum boolean definition entirely and use simple typedef
+        # Replace the whole enum block
+        content = re.sub(
+            r'typedef\s+enum\s*\{[^}]*false[^}]*true[^}]*\}\s*boolean\s*;',
+            'typedef int boolean;\n#ifndef __cplusplus\n#ifndef true\n#define true 1\n#endif\n#ifndef false\n#define false 0\n#endif\n#endif',
+            content,
+            flags=re.DOTALL
+        )
 
-        # Fix missing include for PATH_MAX on PSP
-        sed -i '1i #include <limits.h>' m_misc.c || true
-        sed -i '1i #include <limits.h>' d_iwad.c || true
+        with open("doomtype.h", "w") as f:
+            f.write(content)
+        PYEOF
+        python3 /tmp/bool_patch.py
+
+        echo "=== Result doomtype.h ==="
+        cat doomtype.h
+
+        echo "=== Patching i_system.c ==="
+        # PSP doesn't have signal.h the same way
+        sed -i 's/#include <signal.h>/\/\/#include <signal.h>/' i_system.c || true
+
+        # Replace raise(SIGTERM) and similar
+        sed -i 's/raise(SIGTERM)/sceKernelExitGame()/g' i_system.c || true
+        sed -i 's/raise(sig)/sceKernelExitGame()/g' i_system.c || true
+
+        # Add PSP header to i_system.c
+        sed -i '1i #include <pspkernel.h>' i_system.c
+
+        echo "=== Patching d_iwad.c ==="
+        # Add limits.h and disable HOME/path searching that won't work on PSP
+        sed -i '1i #include <limits.h>' d_iwad.c
+        # PSP: getenv won't work meaningfully
+        sed -i 's/getenv("HOME")/NULL/g' d_iwad.c || true
+        sed -i 's/getenv("DOOMWADDIR")/NULL/g' d_iwad.c || true
+        sed -i 's/getenv("DOOMWADPATH")/NULL/g' d_iwad.c || true
+
+        echo "=== Patching m_misc.c ==="
+        sed -i '1i #include <limits.h>' m_misc.c
+
+        echo "=== Patching w_file_stdc.c ==="
         sed -i '1i #include <limits.h>' w_file_stdc.c || true
 
-        # Fix any mkdir references (PSP doesn't have full POSIX)
-        sed -i 's|M_MakeDirectory("|//M_MakeDirectory("|g' m_misc.c || true
+        echo "=== Patching m_config.c ==="
+        sed -i '1i #include <limits.h>' m_config.c || true
+
+        echo "=== Checking for other issues ==="
+        # Remove any Windows-specific or Linux-specific WAD search paths
+        # that would cause issues on PSP
+        grep -rn "opendir\|readdir\|glob\|wordexp" *.c || echo "No dir scanning found"
+
+        echo "=== Done patching ==="
 
     - name: Copy PSP platform file and Makefile
       run: |
         cp doomgeneric_psp.c doomgeneric/doomgeneric/doomgeneric_psp.c
         cp Makefile doomgeneric/doomgeneric/Makefile
 
+    - name: List source files
+      run: |
+        cd doomgeneric/doomgeneric
+        echo "=== Files present ==="
+        ls -la *.c | head -80
+        echo "=== Checking doomtype.h ==="
+        head -80 doomtype.h
+
     - name: Build
       run: |
         cd doomgeneric/doomgeneric
         export PSPDEV=/usr/local/pspdev
         export PATH=$PSPDEV/bin:$PATH
-        make 2>&1 | head -100
+        make 2>&1 || true
+        echo "=== Build artifacts ==="
+        ls -la *.o 2>/dev/null | tail -20
+        ls -la *.elf *.prx EBOOT.PBP PARAM.SFO 2>/dev/null || echo "No final artifacts yet"
+
+    - name: Retry build with verbose errors
+      run: |
+        cd doomgeneric/doomgeneric
+        export PSPDEV=/usr/local/pspdev
+        export PATH=$PSPDEV/bin:$PATH
+        make 2>&1 | tail -60
+
+    - name: Check EBOOT exists
+      run: |
+        ls -la doomgeneric/doomgeneric/EBOOT.PBP
 
     - name: Package
       run: |
