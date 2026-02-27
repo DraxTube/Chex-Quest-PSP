@@ -11,7 +11,7 @@ OBJS = am_map.o d_event.o d_items.o d_iwad.o d_loop.o d_main.o d_mode.o \
        p_tick.o p_user.o r_bsp.o r_data.o r_draw.o r_main.o r_plane.o \
        r_segs.o r_sky.o r_things.o s_sound.o sha1.o sounds.o st_lib.o \
        st_stuff.o tables.o v_video.o w_checksum.o w_file.o w_file_stdc.o \
-       w_main.o w_wad.o wi_stuff.o z_zone.o doomgeneric_psp.o
+       w_main.o w_wad.o wi_stuff.o z_zone.o doomgeneric_psp.o psp_sound.o
 
 INCDIR =
 CFLAGS = -std=gnu99 -O2 -G0 -Wall -DPSP -DNORMALUNIX -DFEATURE_SOUND=0 \
@@ -25,7 +25,7 @@ CFLAGS = -std=gnu99 -O2 -G0 -Wall -DPSP -DNORMALUNIX -DFEATURE_SOUND=0 \
 LIBDIR =
 LDFLAGS =
 
-LIBS = -lpspgu -lpspdisplay -lpspge -lpspctrl -lpsppower -lpsprtc -lm
+LIBS = -lpspgu -lpspdisplay -lpspge -lpspctrl -lpsppower -lpsprtc -lpspaudio -lm
 
 PSPSDK_LIBS =
 
