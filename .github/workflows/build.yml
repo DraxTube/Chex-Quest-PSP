@@ -84,6 +84,7 @@ jobs:
           cp doomgeneric_psp.c doomgeneric/doomgeneric/doomgeneric_psp.c
           cp Makefile doomgeneric/doomgeneric/Makefile
           cp dummy.c doomgeneric/doomgeneric/dummy.c
+          cp psp_sound.c doomgeneric/doomgeneric/psp_sound.c
 
       - name: Build
         shell: bash
