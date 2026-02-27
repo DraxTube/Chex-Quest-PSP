@@ -25,12 +25,16 @@ CFLAGS = -std=gnu99 -O2 -G0 -Wall -DPSP -DNORMALUNIX -DFEATURE_SOUND=0 \
 LIBDIR =
 LDFLAGS =
 
-# SOLO le librerie che servono davvero - NIENTE audio/net/debug
 LIBS = -lpspgu -lpspdisplay -lpspge -lpspctrl -lpsppower -lpsprtc -lm
+
+# Impedisci a build.mak di aggiungere librerie extra (net, debug, ecc.)
+PSPSDK_LIBS =
 
 BUILD_PRX = 1
 PSP_FW_VERSION = 660
-PSP_LARGE_MEMORY = 1
+
+EXTRA_TARGETS = EBOOT.PBP
+PSP_EBOOT_TITLE = Chex Quest PSP
 
 PSPSDK = $(shell psp-config --pspsdk-path)
 include $(PSPSDK)/lib/build.mak
