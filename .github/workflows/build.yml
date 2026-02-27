@@ -16,7 +16,7 @@ jobs:
     steps:
     - name: Install system deps
       run: |
-        apk add --no-cache make git bash
+        apk add --no-cache make git bash sed
 
     - name: Checkout
       uses: actions/checkout@v4
@@ -25,23 +25,50 @@ jobs:
       run: |
         git clone https://github.com/ozkl/doomgeneric.git
 
-    - name: Copy PSP platform file
+    - name: Patch doomgeneric for PSP
+      run: |
+        cd doomgeneric/doomgeneric
+
+        # Fix boolean keyword conflict: rename false/true in enum
+        sed -i 's/^    false       = 0,/    d_false       = 0,/' doomtype.h
+        sed -i 's/^    true        = 1,/    d_true        = 1,/' doomtype.h
+
+        # If code uses 'boolean' type with false/true values, patch those too
+        # Most doomgeneric code uses 0/1 directly, but just in case:
+        find . -name '*.c' -exec sed -i 's/= false;/= d_false;/g' {} +
+        find . -name '*.c' -exec sed -i 's/= true;/= d_true;/g' {} +
+        find . -name '*.c' -exec sed -i 's/return false;/return d_false;/g' {} +
+        find . -name '*.c' -exec sed -i 's/return true;/return d_true;/g' {} +
+        find . -name '*.h' -exec sed -i 's/= false;/= d_false;/g' {} +
+        find . -name '*.h' -exec sed -i 's/= true;/= d_true;/g' {} +
+        find . -name '*.h' -exec sed -i 's/return false;/return d_false;/g' {} +
+        find . -name '*.h' -exec sed -i 's/return true;/return d_true;/g' {} +
+
+        # Fix missing include for PATH_MAX on PSP
+        sed -i '1i #include <limits.h>' m_misc.c || true
+        sed -i '1i #include <limits.h>' d_iwad.c || true
+        sed -i '1i #include <limits.h>' w_file_stdc.c || true
+
+        # Fix any mkdir references (PSP doesn't have full POSIX)
+        sed -i 's|M_MakeDirectory("|//M_MakeDirectory("|g' m_misc.c || true
+
+    - name: Copy PSP platform file and Makefile
       run: |
         cp doomgeneric_psp.c doomgeneric/doomgeneric/doomgeneric_psp.c
+        cp Makefile doomgeneric/doomgeneric/Makefile
 
     - name: Build
       run: |
         cd doomgeneric/doomgeneric
-        cp ../../Makefile .
         export PSPDEV=/usr/local/pspdev
         export PATH=$PSPDEV/bin:$PATH
-        make
+        make 2>&1 | head -100
 
     - name: Package
       run: |
         mkdir -p release/ChexQuest
         cp doomgeneric/doomgeneric/EBOOT.PBP release/ChexQuest/
-        echo "Place chex.wad in this folder and rename it to doom1.wad" > release/ChexQuest/README.txt
+        echo "Place chex.wad in this folder" > release/ChexQuest/README.txt
 
     - name: Upload artifact
       uses: actions/upload-artifact@v4
