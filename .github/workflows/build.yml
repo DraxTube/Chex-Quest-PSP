@@ -98,12 +98,14 @@ jobs:
           export PSPDEV=/usr/local/pspdev
           export PATH="$PSPDEV/bin:$PATH"
           make 2>&1
-          mksfoex -d MEMSIZE=1 "Chex Quest PSP" PARAM.SFO
-          pack-pbp EBOOT.PBP PARAM.SFO NULL NULL NULL NULL NULL chexquest.prx NULL
-          
+
           echo "=== Checking outputs ==="
           ls -la EBOOT.PBP PARAM.SFO 2>/dev/null || { echo "ERROR: EBOOT.PBP or PARAM.SFO not found!"; exit 1; }
           ls -la *.elf *.prx 2>/dev/null || echo "Note: .elf/.prx intermediates may have been cleaned"
+
+          # Verify EBOOT structure
+          echo "=== EBOOT.PBP file size ==="
+          wc -c EBOOT.PBP
 
       - name: Upload EBOOT.PBP
         uses: actions/upload-artifact@v4
