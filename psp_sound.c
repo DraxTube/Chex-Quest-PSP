@@ -2,17 +2,6 @@
  * psp_sound.c - Audio per Chex Quest PSP
  * SFX: mixing multicanale dal WAD
  * Musica: MUS→MIDI → OPL2 FM Synthesis (emulazione Yamaha OPL2)
- *
- * L'emulatore OPL2 implementa:
- * - 9 canali FM a 2 operatori
- * - Modulazione di frequenza (FM synthesis)
- * - 4 waveform per operatore (sine, half-sine, abs-sine, quarter-sine)
- * - Envelope ADSR con rate scaling
- * - Tremolo e vibrato
- * - Feedback per operatore 1
- * - Tabella GENMIDI per mapping strumenti GM → patch OPL2
- *
- * Usa la GENMIDI lump dal WAD per i timbri autentici.
  */
 
 #include "doomtype.h"
@@ -39,21 +28,18 @@
 
 /* ==================== OPL2 FM Synthesis ==================== */
 
-#define OPL_RATE        49716   /* OPL2 clock / 72 */
+#define OPL_RATE        49716
 #define OPL_CHANNELS    9
-#define OPL_NUM_OPS     18      /* 2 operatori per canale */
+#define OPL_NUM_OPS     18
 
-/* Sine table size */
 #define SINE_TABLE_SIZE 1024
 
-/* Envelope stages */
 #define ENV_ATTACK  0
 #define ENV_DECAY   1
 #define ENV_SUSTAIN 2
 #define ENV_RELEASE 3
 #define ENV_OFF     4
 
-/* Waveform types */
 #define WAVE_SINE       0
 #define WAVE_HALFSINE   1
 #define WAVE_ABSSINE    2
@@ -62,25 +48,23 @@
 /* ==================== OPL2 Operator ==================== */
 
 typedef struct {
-    /* Registri */
-    int         waveform;       /* 0-3 */
-    int         mult;           /* frequency multiplier (0-15) */
-    int         ksl;            /* key scale level */
-    int         tl;             /* total level (attenuation) 0-63 */
-    int         ar;             /* attack rate 0-15 */
-    int         dr;             /* decay rate 0-15 */
-    int         sl;             /* sustain level 0-15 */
-    int         rr;             /* release rate 0-15 */
-    int         am;             /* tremolo enable */
-    int         vib;            /* vibrato enable */
-    int         egt;            /* envelope type (sustain) */
-    int         ksr;            /* key scale rate */
+    int         waveform;
+    int         mult;
+    int         ksl;
+    int         tl;
+    int         ar;
+    int         dr;
+    int         sl;
+    int         rr;
+    int         am;
+    int         vib;
+    int         egt;
+    int         ksr;
 
-    /* Stato runtime */
-    uint32_t    phase;          /* accumulatore di fase (fixed 16.16) */
-    uint32_t    phase_inc;      /* incremento fase */
+    uint32_t    phase;
+    uint32_t    phase_inc;
     int         env_stage;
-    int32_t     env_level;      /* 0 = max volume, 0x1FF = silence (in scala OPL) */
+    int32_t     env_level;
     int32_t     env_target;
     int32_t     env_rate;
     int         key_on;
@@ -89,13 +73,14 @@ typedef struct {
 /* ==================== OPL2 Channel ==================== */
 
 typedef struct {
-    opl_op_t    op[2];          /* modulator (0), carrier (1) */
-    int         freq;           /* F-Number (0-1023) */
-    int         octave;         /* octave/block (0-7) */
+    opl_op_t    op[2];
+    int         freq;
+    int         octave;
     int         key_on;
-    int         feedback;       /* feedback amount (0-7) */
-    int         algorithm;      /* 0=FM, 1=additive */
-    int32_t     fb_buf[2];      /* feedback buffer */
+    int         feedback;
+    int         algorithm;
+    int32_t     fb_buf[2];
+    int         vol_atten;      /* Attenuazione volume dinamica */
 } opl_ch_t;
 
 /* ==================== OPL2 Chip ==================== */
@@ -108,7 +93,6 @@ typedef struct {
     int         vibrato_pos;
     uint32_t    sample_cnt;
     
-    /* Resampling OPL_RATE → OUTPUT_RATE */
     int32_t     resample_accum;
     int32_t     resample_last;
 } opl_chip_t;
@@ -117,30 +101,29 @@ static opl_chip_t opl;
 
 /* ==================== GENMIDI Structures ==================== */
 
-/* Struttura di un singolo voice nella GENMIDI lump */
 typedef struct {
-    uint8_t     modulator_tremolo;  /* AM/VIB/EGT/KSR/MULT */
+    uint8_t     modulator_tremolo;
     uint8_t     carrier_tremolo;
-    uint8_t     modulator_level;    /* KSL/TL */
+    uint8_t     modulator_level;
     uint8_t     carrier_level;
-    uint8_t     modulator_attack;   /* AR/DR */
+    uint8_t     modulator_attack;
     uint8_t     carrier_attack;
-    uint8_t     modulator_sustain;  /* SL/RR */
+    uint8_t     modulator_sustain;
     uint8_t     carrier_sustain;
-    uint8_t     modulator_wave;     /* waveform select */
+    uint8_t     modulator_wave;
     uint8_t     carrier_wave;
-    uint8_t     feedback;           /* feedback/algorithm */
+    uint8_t     feedback;
 } genmidi_voice_t;
 
 typedef struct {
     uint16_t    flags;
     uint8_t     fine_tuning;
     uint8_t     fixed_note;
-    genmidi_voice_t voice[2];       /* dual voice instruments */
+    genmidi_voice_t voice[2];
 } genmidi_instr_t;
 
-#define GENMIDI_NUM_INSTRS  175     /* 128 melodic + 47 percussion */
-#define GENMIDI_HEADER_SIZE 8       /* "#OPL_II#" */
+#define GENMIDI_NUM_INSTRS  175
+#define GENMIDI_HEADER_SIZE 8
 #define GENMIDI_FLAG_FIXED  0x0001
 #define GENMIDI_FLAG_2VOICE 0x0004
 
@@ -170,14 +153,13 @@ typedef struct {
     int         is_drum;
 } midi_ch_state_t;
 
-/* Tracking di quale nota MIDI → quale canale OPL */
 typedef struct {
     int         active;
     int         midi_ch;
     int         note;
     int         opl_ch;
     int         velocity;
-    uint32_t    age;        /* per voice stealing */
+    uint32_t    age;
 } voice_alloc_t;
 
 typedef struct {
@@ -228,25 +210,22 @@ static int sfx_cache_init = 0;
 
 static int16_t __attribute__((aligned(64))) mix_buf[MIX_SAMPLES * 2];
 
-/* ==================== Frequency multiplier table ==================== */
+/* ==================== Tables ==================== */
 
 static const int mult_table[16] = {
     1, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 20, 24, 24, 30, 30
 };
 
-/* OPL note → F-Number per octave 4 (da documentazione OPL2) */
 static const int fnumber_table[12] = {
     0x158, 0x16B, 0x181, 0x198, 0x1B0, 0x1CA,
     0x1E5, 0x202, 0x220, 0x241, 0x263, 0x287
 };
 
-/* Attack rate table (approssimato dalla spec OPL2) */
 static const int32_t ar_increment[16] = {
     0, 4, 8, 12, 16, 24, 32, 48,
     64, 96, 128, 192, 256, 384, 512, 0x1FF
 };
 
-/* Decay/Release rate table */
 static const int32_t dr_increment[16] = {
     0, 1, 2, 3, 4, 5, 6, 7,
     8, 10, 12, 16, 20, 24, 32, 48
@@ -260,13 +239,11 @@ static void opl_init(void)
     
     memset(&opl, 0, sizeof(opl));
     
-    /* Genera sine table (log-sin come nel vero OPL2) */
     for (i = 0; i < SINE_TABLE_SIZE; i++)
     {
         double phase = ((double)i + 0.5) / SINE_TABLE_SIZE * 3.14159265358979323846 / 2.0;
         double val = sin(phase);
         
-        /* Converti in log scale come OPL2 */
         if (val > 0.0)
         {
             double logval = -log(val) / log(2.0) * 256.0;
@@ -280,20 +257,19 @@ static void opl_init(void)
         }
     }
     
-    /* Genera exp table (per convertire log → linear) */
     for (i = 0; i < 256; i++)
     {
         double val = pow(2.0, (double)(255 - i) / 256.0) * 1024.0;
         opl.exp_table[i] = (int32_t)(val + 0.5);
     }
     
-    /* Init tutti i canali */
     for (i = 0; i < OPL_CHANNELS; i++)
     {
         opl.channels[i].op[0].env_stage = ENV_OFF;
         opl.channels[i].op[1].env_stage = ENV_OFF;
         opl.channels[i].op[0].env_level = 0x1FF;
         opl.channels[i].op[1].env_level = 0x1FF;
+        opl.channels[i].vol_atten = 0;
     }
 }
 
@@ -305,12 +281,11 @@ static int32_t opl_lookup_sine(int waveform, uint32_t phase)
     int negate = 0;
     int32_t result;
     
-    /* phase è 0..0x3FF (10 bit) */
     phase &= 0x3FF;
     
     switch (waveform)
     {
-    case WAVE_SINE: /* Full sine */
+    case WAVE_SINE:
         if (phase & 0x200)
             negate = 1;
         if (phase & 0x100)
@@ -319,23 +294,23 @@ static int32_t opl_lookup_sine(int waveform, uint32_t phase)
             index = (int)(phase & 0xFF) * SINE_TABLE_SIZE / 256;
         break;
         
-    case WAVE_HALFSINE: /* Half sine (positive half only) */
+    case WAVE_HALFSINE:
         if (phase & 0x200)
-            return 0xFFF; /* silence */
+            return 0xFFF;
         if (phase & 0x100)
             index = (SINE_TABLE_SIZE - 1) - (int)(phase & 0xFF) * SINE_TABLE_SIZE / 256;
         else
             index = (int)(phase & 0xFF) * SINE_TABLE_SIZE / 256;
         break;
         
-    case WAVE_ABSSINE: /* Absolute sine */
+    case WAVE_ABSSINE:
         if (phase & 0x100)
             index = (SINE_TABLE_SIZE - 1) - (int)(phase & 0xFF) * SINE_TABLE_SIZE / 256;
         else
             index = (int)(phase & 0xFF) * SINE_TABLE_SIZE / 256;
         break;
         
-    case WAVE_QUARTSINE: /* Quarter sine (first quarter repeated) */
+    case WAVE_QUARTSINE:
         if (phase & 0x100)
             return 0xFFF;
         index = (int)(phase & 0xFF) * SINE_TABLE_SIZE / 256;
@@ -352,12 +327,11 @@ static int32_t opl_lookup_sine(int waveform, uint32_t phase)
     result = opl.sine_table[index];
     
     if (negate)
-        result |= 0x8000; /* bit di segno */
+        result |= 0x8000;
     
     return result;
 }
 
-/* Converti log-sin in output lineare */
 static int32_t opl_exp_out(int32_t log_sin)
 {
     int negate = (log_sin & 0x8000) ? 1 : 0;
@@ -408,7 +382,7 @@ static void opl_env_advance(opl_op_t *op)
     case ENV_DECAY:
         if (op->dr > 0)
         {
-            int32_t target = (int32_t)op->sl << 5; /* SL: 0-15 → 0-480 */
+            int32_t target = (int32_t)op->sl << 5;
             int32_t inc = dr_increment[op->dr];
             op->env_level += inc;
             if (op->env_level >= target)
@@ -424,7 +398,7 @@ static void opl_env_advance(opl_op_t *op)
         break;
         
     case ENV_SUSTAIN:
-        if (!op->egt) /* Se non sustain, decay to silence */
+        if (!op->egt)
         {
             int32_t inc = dr_increment[op->rr];
             op->env_level += inc;
@@ -463,7 +437,6 @@ static void opl_key_on(int ch)
     
     c->key_on = 1;
     
-    /* Reset operatori */
     c->op[0].phase = 0;
     c->op[0].env_level = 0x1FF;
     c->op[0].env_stage = ENV_ATTACK;
@@ -493,22 +466,24 @@ static void opl_key_off(int ch)
     c->op[1].key_on = 0;
 }
 
-/* ==================== OPL2 Set Frequency ==================== */
+/* ==================== OPL2 Set Frequency (FIXED) ==================== */
 
 static void opl_set_freq(int ch, int fnum, int block)
 {
     opl_ch_t *c = &opl.channels[ch];
     uint32_t freq_val;
+    uint32_t rate_scale;
     
     c->freq = fnum;
     c->octave = block;
     
-    /* Calcola phase increment base */
     freq_val = (uint32_t)fnum << block;
     
-    /* phase_inc per ogni operatore (con multiplier) */
-    c->op[0].phase_inc = (freq_val * (uint32_t)mult_table[c->op[0].mult]) >> 1;
-    c->op[1].phase_inc = (freq_val * (uint32_t)mult_table[c->op[1].mult]) >> 1;
+    /* FIX: Compensa per OUTPUT_RATE vs OPL_RATE */
+    rate_scale = (OUTPUT_RATE << 8) / OPL_RATE;
+    
+    c->op[0].phase_inc = ((freq_val * (uint32_t)mult_table[c->op[0].mult] * rate_scale) >> 8) >> 1;
+    c->op[1].phase_inc = ((freq_val * (uint32_t)mult_table[c->op[1].mult] * rate_scale) >> 8) >> 1;
 }
 
 /* ==================== OPL2 Program Operator ==================== */
@@ -519,30 +494,25 @@ static void opl_program_op(opl_op_t *op, const uint8_t tremolo_byte,
                             const uint8_t sustain_byte,
                             const uint8_t wave_byte)
 {
-    /* Byte 1: AM | VIB | EGT | KSR | MULT(4bit) */
     op->am   = (tremolo_byte >> 7) & 1;
     op->vib  = (tremolo_byte >> 6) & 1;
     op->egt  = (tremolo_byte >> 5) & 1;
     op->ksr  = (tremolo_byte >> 4) & 1;
     op->mult = tremolo_byte & 0x0F;
     
-    /* Byte 2: KSL(2bit) | TL(6bit) */
     op->ksl = (level_byte >> 6) & 3;
     op->tl  = level_byte & 0x3F;
     
-    /* Byte 3: AR(4bit) | DR(4bit) */
     op->ar = (attack_byte >> 4) & 0x0F;
     op->dr = attack_byte & 0x0F;
     
-    /* Byte 4: SL(4bit) | RR(4bit) */
     op->sl = (sustain_byte >> 4) & 0x0F;
     op->rr = sustain_byte & 0x0F;
     
-    /* Byte 5: waveform */
     op->waveform = wave_byte & 0x03;
 }
 
-/* ==================== OPL2 Generate Sample ==================== */
+/* ==================== OPL2 Generate Sample (FIXED) ==================== */
 
 static int32_t opl_generate_sample(void)
 {
@@ -551,9 +521,8 @@ static int32_t opl_generate_sample(void)
     
     opl.sample_cnt++;
     
-    /* Tremolo (3.7 Hz) e vibrato (6.1 Hz) LFO */
-    opl.tremolo_pos = (opl.tremolo_pos + 1) % (OPL_RATE * 1000 / 3700);
-    opl.vibrato_pos = (opl.vibrato_pos + 1) % (OPL_RATE * 1000 / 6100);
+    opl.tremolo_pos = (opl.tremolo_pos + 1) % (OUTPUT_RATE * 1000 / 3700);
+    opl.vibrato_pos = (opl.vibrato_pos + 1) % (OUTPUT_RATE * 1000 / 6100);
     
     for (ch = 0; ch < OPL_CHANNELS; ch++)
     {
@@ -566,29 +535,24 @@ static int32_t opl_generate_sample(void)
         int32_t feedback_val;
         int32_t mod_env_total, car_env_total;
         
-        /* Skip canali inattivi */
         if (mod->env_stage == ENV_OFF && car->env_stage == ENV_OFF)
             continue;
         
-        /* Avanza envelope */
         opl_env_advance(mod);
         opl_env_advance(car);
         
-        /* Avanza fase */
         mod->phase += mod->phase_inc;
         car->phase += car->phase_inc;
         
-        /* Calcola envelope totale con TL */
         mod_env_total = mod->env_level + ((int32_t)mod->tl << 2);
-        car_env_total = car->env_level + ((int32_t)car->tl << 2);
+        /* FIX: Applica vol_atten solo al carrier, non modifica TL originale */
+        car_env_total = car->env_level + ((int32_t)car->tl << 2) + c->vol_atten;
         
         if (mod_env_total > 0x1FF) mod_env_total = 0x1FF;
         if (car_env_total > 0x1FF) car_env_total = 0x1FF;
         
-        /* === Modulator output === */
-        mod_phase = (mod->phase >> 6) & 0x3FF; /* Scala a 10 bit */
+        mod_phase = (mod->phase >> 6) & 0x3FF;
         
-        /* Feedback */
         if (c->feedback > 0)
         {
             feedback_val = (c->fb_buf[0] + c->fb_buf[1]) >> (9 - c->feedback);
@@ -600,16 +564,13 @@ static int32_t opl_generate_sample(void)
                   ((mod_log & 0x7FFF) + (mod_env_total << 3));
         mod_out = opl_exp_out(mod_log);
         
-        /* Salva nel buffer feedback */
         c->fb_buf[1] = c->fb_buf[0];
         c->fb_buf[0] = mod_out;
         
-        /* === Carrier output === */
         car_phase = (car->phase >> 6) & 0x3FF;
         
         if (c->algorithm == 0)
         {
-            /* FM: modulator modula carrier */
             car_phase = (car_phase + (uint32_t)(mod_out >> 1)) & 0x3FF;
         }
         
@@ -620,20 +581,16 @@ static int32_t opl_generate_sample(void)
         
         if (c->algorithm == 0)
         {
-            /* FM: solo carrier esce */
             output += car_out;
         }
         else
         {
-            /* Additive: entrambi escono */
             output += mod_out + car_out;
         }
     }
     
-    /* Scala output */
     output >>= 1;
     
-    /* Clamp */
     if (output > 32767) output = 32767;
     if (output < -32768) output = -32768;
     
@@ -654,14 +611,13 @@ static void load_genmidi(void)
     lumpnum = W_CheckNumForName("GENMIDI");
     if (lumpnum < 0)
     {
-        genmidi_loaded = -1; /* non trovato */
+        genmidi_loaded = -1;
         return;
     }
     
     data = (const uint8_t *)W_CacheLumpNum(lumpnum, PU_STATIC);
     len = W_LumpLength(lumpnum);
     
-    /* Verifica header "#OPL_II#" */
     if (len < (int)(GENMIDI_HEADER_SIZE + sizeof(genmidi_instr_t) * GENMIDI_NUM_INSTRS))
     {
         genmidi_loaded = -1;
@@ -674,7 +630,6 @@ static void load_genmidi(void)
         return;
     }
     
-    /* Parse strumenti */
     pos = GENMIDI_HEADER_SIZE;
     for (i = 0; i < GENMIDI_NUM_INSTRS; i++)
     {
@@ -700,7 +655,7 @@ static void load_genmidi(void)
             genmidi_instrs[i].voice[v].carrier_sustain   = vp[7];
             genmidi_instrs[i].voice[v].modulator_wave    = vp[8];
             genmidi_instrs[i].voice[v].carrier_wave      = vp[9];
-            genmidi_instrs[i].voice[v].feedback           = vp[10];
+            genmidi_instrs[i].voice[v].feedback          = vp[10];
             pos += 11;
         }
     }
@@ -728,9 +683,9 @@ static void apply_genmidi_voice(int opl_ch, const genmidi_voice_t *gv)
                    gv->carrier_sustain,
                    gv->carrier_wave);
     
-    /* Feedback e algorithm dal byte feedback */
     c->feedback = (gv->feedback >> 1) & 0x07;
     c->algorithm = gv->feedback & 0x01;
+    c->vol_atten = 0; /* Reset attenuazione */
 }
 
 /* ==================== MIDI → OPL2 ==================== */
@@ -741,14 +696,15 @@ static int alloc_opl_voice(int midi_ch, int note)
     int oldest_idx = -1;
     uint32_t oldest_age = 0xFFFFFFFF;
     
-    /* Cerca voce libera */
+    (void)midi_ch;
+    (void)note;
+    
     for (i = 0; i < MAX_VOICES_ACTIVE; i++)
     {
         if (!mus.voices[i].active)
             return i;
     }
     
-    /* Ruba la voce più vecchia (non sullo stesso canale se possibile) */
     for (i = 0; i < MAX_VOICES_ACTIVE; i++)
     {
         if (mus.voices[i].age < oldest_age)
@@ -774,10 +730,10 @@ static void midi_note_on(int midi_ch, int note, int velocity)
     const genmidi_instr_t *instr;
     int fnum, block, real_note;
     float vol_scale;
+    int vol_atten;
     
     if (velocity == 0)
     {
-        /* Note off */
         int i;
         for (i = 0; i < MAX_VOICES_ACTIVE; i++)
         {
@@ -796,10 +752,8 @@ static void midi_note_on(int midi_ch, int note, int velocity)
     if (genmidi_loaded != 1)
         return;
     
-    /* Determina quale strumento usare */
     if (mus.channels[midi_ch].is_drum)
     {
-        /* Percussioni: nota 35-81 → strumenti 128+ */
         instr_idx = 128 + (note - 35);
         if (instr_idx < 128 || instr_idx >= GENMIDI_NUM_INSTRS)
             return;
@@ -813,26 +767,19 @@ static void midi_note_on(int midi_ch, int note, int velocity)
     
     instr = &genmidi_instrs[instr_idx];
     
-    /* Alloca voce OPL */
     slot = alloc_opl_voice(midi_ch, note);
     if (slot < 0)
         return;
     
-    opl_ch_idx = slot; /* 1:1 mapping slot → OPL channel */
+    opl_ch_idx = slot;
     
-    /* Programma il canale OPL con il timbro GENMIDI */
     apply_genmidi_voice(opl_ch_idx, &instr->voice[0]);
     
-    /* Calcola nota */
     if (instr->flags & GENMIDI_FLAG_FIXED)
         real_note = instr->fixed_note;
     else
         real_note = note;
     
-    /* Fine tuning */
-    /* (semplificato - il fine tuning è applicabile come offset) */
-    
-    /* Converti nota MIDI in F-Number + Block */
     if (real_note < 0) real_note = 0;
     if (real_note > 127) real_note = 127;
     
@@ -842,24 +789,21 @@ static void midi_note_on(int midi_ch, int note, int velocity)
     
     fnum = fnumber_table[real_note % 12];
     
-    /* Aggiusta volume carrier in base a velocity e volume canale */
+    /* FIX: Calcola attenuazione senza modificare TL */
     vol_scale = ((float)velocity / 127.0f) *
                 ((float)mus.channels[midi_ch].volume / 127.0f) *
                 ((float)mus.channels[midi_ch].expression / 127.0f) *
                 ((float)mus.music_volume / 127.0f);
     
-    {
-        int tl_adjust = (int)((1.0f - vol_scale) * 40.0f);
-        int new_tl = opl.channels[opl_ch_idx].op[1].tl + tl_adjust;
-        if (new_tl > 63) new_tl = 63;
-        opl.channels[opl_ch_idx].op[1].tl = new_tl;
-    }
+    vol_atten = (int)((1.0f - vol_scale) * 128.0f);
+    if (vol_atten < 0) vol_atten = 0;
+    if (vol_atten > 0x1FF) vol_atten = 0x1FF;
     
-    /* Set frequency e key on */
+    opl.channels[opl_ch_idx].vol_atten = vol_atten;
+    
     opl_set_freq(opl_ch_idx, fnum, block);
     opl_key_on(opl_ch_idx);
     
-    /* Tracking */
     mus.voices[slot].active = 1;
     mus.voices[slot].midi_ch = midi_ch;
     mus.voices[slot].note = note;
@@ -1167,7 +1111,6 @@ static void process_midi_event(midi_event_t *ev)
         midi_program_change(ch, ev->data1);
         break;
     case 0xE0:
-        /* Pitch bend - simplified for now */
         break;
     }
 }
@@ -1235,7 +1178,6 @@ static int snd_mix_thread(SceSize args, void *argp)
         {
             int mix_l = 0, mix_r = 0;
 
-            /* SFX */
             for (c = 0; c < SND_CHANNELS; c++)
             {
                 int idx, sample, lv, rv;
@@ -1255,7 +1197,6 @@ static int snd_mix_thread(SceSize args, void *argp)
                 mix_r += (sample * rv) / 255;
             }
 
-            /* OPL2 Music */
             if (mus.playing)
             {
                 int32_t opl_sample = opl_generate_sample();
@@ -1490,7 +1431,6 @@ void *I_RegisterSong(void *data, int len)
     if (!data || len <= 0) return NULL;
     if (mus.midi_data) { free(mus.midi_data); mus.midi_data = NULL; mus.midi_data_len = 0; }
 
-    /* Carica GENMIDI se non ancora fatto */
     if (!genmidi_loaded)
         load_genmidi();
 
@@ -1562,7 +1502,6 @@ void I_PlaySong(void *handle, boolean looping)
     for (i = 0; i < MAX_VOICES_ACTIVE; i++)
         mus.voices[i].active = 0;
 
-    /* Re-init OPL per pulizia */
     opl_init();
 
     for (i = 0; i < MIDI_CHANNELS; i++)
