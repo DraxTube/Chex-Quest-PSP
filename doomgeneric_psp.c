@@ -299,65 +299,45 @@ static void poll_input(void)
     uint32_t ob = pad_prev.Buttons;
     uint32_t nb = pad.Buttons;
 
-    /* D-pad: movimento */
+    /* === D-pad: movimento === */
     check_btn(ob, nb, PSP_CTRL_UP,       KEY_UPARROW);
     check_btn(ob, nb, PSP_CTRL_DOWN,     KEY_DOWNARROW);
     check_btn(ob, nb, PSP_CTRL_LEFT,     KEY_LEFTARROW);
     check_btn(ob, nb, PSP_CTRL_RIGHT,    KEY_RIGHTARROW);
 
-    /* Bottoni azione */
-    check_btn(ob, nb, PSP_CTRL_CROSS,    KEY_FIRE);
-    check_btn(ob, nb, PSP_CTRL_CIRCLE,   KEY_USE);
-    check_btn(ob, nb, PSP_CTRL_SQUARE,   KEY_STRAFE_L);
-    check_btn(ob, nb, PSP_CTRL_TRIANGLE, KEY_STRAFE_R);
+    /* === Bottoni azione (USA I CODICI TASTO STANDARD DI DOOM!) === */
+    check_btn(ob, nb, PSP_CTRL_CROSS,    KEY_RCTRL);    /* Fuoco (fire) */
+    check_btn(ob, nb, PSP_CTRL_CROSS,    KEY_ENTER);    /* + Enter per menu */
+    check_btn(ob, nb, PSP_CTRL_CIRCLE,   ' ');          /* Usa/Apri (use) */
+    check_btn(ob, nb, PSP_CTRL_SQUARE,   KEY_RALT);     /* Strafe modifier */
+    check_btn(ob, nb, PSP_CTRL_TRIANGLE, KEY_RSHIFT);   /* Corri (run) */
 
-    /* Trigger: strafe */
-    check_btn(ob, nb, PSP_CTRL_LTRIGGER, KEY_STRAFE_L);
-    check_btn(ob, nb, PSP_CTRL_RTRIGGER, KEY_STRAFE_R);
+    /* === Trigger: cambio arma === */
+    check_btn(ob, nb, PSP_CTRL_LTRIGGER, ',');           /* Arma precedente */
+    check_btn(ob, nb, PSP_CTRL_RTRIGGER, '.');           /* Arma successiva */
 
-    /* Start = Escape (menu), Select = Tab (automap) */
-    check_btn(ob, nb, PSP_CTRL_START,    KEY_ESCAPE);
-    check_btn(ob, nb, PSP_CTRL_SELECT,   KEY_TAB);
+    /* === Start/Select === */
+    check_btn(ob, nb, PSP_CTRL_START,    KEY_ESCAPE);   /* Menu / Pausa */
+    check_btn(ob, nb, PSP_CTRL_SELECT,   KEY_TAB);      /* Automap */
 
-    /* Analog stick -> frecce direzionali */
+    /* === Analog stick -> frecce direzionali === */
     ax = (int)pad.Lx - 128;
     ay = (int)pad.Ly - 128;
 
-    /* Sinistra */
     state = (ax < -thr) ? 1 : 0;
-    if (state != analog_left)
-    {
-        keyq_push(state, KEY_LEFTARROW);
-        analog_left = state;
-    }
+    if (state != analog_left)  { keyq_push(state, KEY_LEFTARROW);  analog_left = state; }
 
-    /* Destra */
     state = (ax > thr) ? 1 : 0;
-    if (state != analog_right)
-    {
-        keyq_push(state, KEY_RIGHTARROW);
-        analog_right = state;
-    }
+    if (state != analog_right) { keyq_push(state, KEY_RIGHTARROW); analog_right = state; }
 
-    /* Su */
     state = (ay < -thr) ? 1 : 0;
-    if (state != analog_up)
-    {
-        keyq_push(state, KEY_UPARROW);
-        analog_up = state;
-    }
+    if (state != analog_up)    { keyq_push(state, KEY_UPARROW);    analog_up = state; }
 
-    /* Giù */
     state = (ay > thr) ? 1 : 0;
-    if (state != analog_down)
-    {
-        keyq_push(state, KEY_DOWNARROW);
-        analog_down = state;
-    }
+    if (state != analog_down)  { keyq_push(state, KEY_DOWNARROW);  analog_down = state; }
 
     pad_prev = pad;
 }
-
 /* ==================== DoomGeneric Interface ==================== */
 
 void DG_Init(void)
