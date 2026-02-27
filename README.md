@@ -1,4 +1,4 @@
-# 🧀 Chex Quest PSP
+# 🥣 Chex Quest PSP
 
 A port of **Chex Quest** (1996) to the **PlayStation Portable**, built on top of [doomgeneric](https://github.com/ozkl/doomgeneric) with a fully custom PSP platform layer.
 
