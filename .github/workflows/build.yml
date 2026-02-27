@@ -2,10 +2,9 @@ name: Build Chex Quest PSP
 
 on:
   push:
-    branches: [main]
+    branches: [ main ]
   pull_request:
-    branches: [main]
-  workflow_dispatch:
+    branches: [ main ]
 
 jobs:
   build:
@@ -15,16 +14,17 @@ jobs:
 
     steps:
       - name: Install dependencies
-        run: apk add --no-cache make git bash sed coreutils python3
+        run: |
+          apk add --no-cache make git bash sed coreutils python3 imagemagick
 
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       - name: Clone doomgeneric
         run: git clone https://github.com/ozkl/doomgeneric.git
 
       - name: Patch doomgeneric sources
-        shell: bash
+        shell: bash --noprofile --norc -e -o pipefail {0}
         run: |
           set -euo pipefail
           cd doomgeneric/doomgeneric
@@ -65,20 +65,8 @@ jobs:
           sed -i 's/getenv("DOOMWADDIR")/NULL/g' d_iwad.c
           sed -i 's/getenv("DOOMWADPATH")/NULL/g' d_iwad.c
 
-          # Patch doomgeneric.c to ensure DG_ScreenBuffer is allocated with correct size
-          if grep -q 'DOOMGENERIC_RESX \* DOOMGENERIC_RESY' doomgeneric.c; then
-            echo "doomgeneric.c buffer allocation looks OK"
-          fi
-
-          # Patch i_video.c - ensure screen buffer uses correct resolution
-          if [ -f "i_video.c" ]; then
-            echo "i_video.c found, checking..."
-            # Make sure I_InitGraphics doesn't override our resolution
-            grep -n 'SCREENWIDTH\|screenwidth\|320\|200' i_video.c | head -20 || true
-          fi
-
-      - name: Copy PSP files
-        shell: bash
+      - name: Copy PSP-specific files
+        shell: bash --noprofile --norc -e -o pipefail {0}
         run: |
           set -euo pipefail
           cp doomgeneric_psp.c doomgeneric/doomgeneric/doomgeneric_psp.c
@@ -86,8 +74,49 @@ jobs:
           cp dummy.c doomgeneric/doomgeneric/dummy.c
           cp psp_sound.c doomgeneric/doomgeneric/psp_sound.c
 
+      - name: Convert assets for PSP
+        shell: bash --noprofile --norc -e -o pipefail {0}
+        run: |
+          set -euo pipefail
+          OUT_DIR="doomgeneric/doomgeneric"
+
+          echo "=== Converting PSP assets ==="
+
+          # ICON0.PNG - 144x80 (icona nel menu XMB)
+          if [ -f "assets/icon.webp" ]; then
+            echo "Converting assets/icon.webp -> ICON0.PNG (144x80)"
+            convert "assets/icon.webp" \
+              -resize 144x80! \
+              -background black \
+              -flatten \
+              -strip \
+              "PNG32:$OUT_DIR/ICON0.PNG"
+            echo "ICON0.PNG created successfully"
+            ls -la "$OUT_DIR/ICON0.PNG"
+          else
+            echo "WARNING: assets/icon.webp not found!"
+          fi
+
+          # PIC0.PNG - 310x180 (sfondo info quando premi triangolo)
+          if [ -f "assets/pic0.webp" ]; then
+            echo "Converting assets/pic0.webp -> PIC0.PNG (310x180)"
+            convert "assets/pic0.webp" \
+              -resize 310x180! \
+              -background black \
+              -flatten \
+              -strip \
+              "PNG32:$OUT_DIR/PIC0.PNG"
+            echo "PIC0.PNG created successfully"
+            ls -la "$OUT_DIR/PIC0.PNG"
+          else
+            echo "WARNING: assets/pic0.webp not found!"
+          fi
+
+          echo "=== Asset conversion complete ==="
+          ls -la $OUT_DIR/*.PNG 2>/dev/null || echo "No PNG assets generated"
+
       - name: Build
-        shell: bash
+        shell: bash --noprofile --norc -e -o pipefail {0}
         run: |
           set -euo pipefail
           cd doomgeneric/doomgeneric
@@ -99,16 +128,31 @@ jobs:
           ls -la EBOOT.PBP PARAM.SFO 2>/dev/null || { echo "EBOOT.PBP missing!"; exit 1; }
           ls -la *.elf *.prx 2>/dev/null || true
 
-          echo "=== Link libraries used ==="
-          psp-readelf -d chexquest.elf 2>/dev/null | head -20 || true
+          echo "=== EBOOT.PBP info ==="
+          ls -la EBOOT.PBP
+          file EBOOT.PBP
 
-          echo "=== Undefined symbols ==="
-          psp-nm chexquest.elf 2>/dev/null | grep " U " | sort -u | head -50 || true
+      - name: Prepare release package
+        shell: bash --noprofile --norc -e -o pipefail {0}
+        run: |
+          set -euo pipefail
+          mkdir -p release/ChexQuest
+          cp doomgeneric/doomgeneric/EBOOT.PBP release/ChexQuest/
+          
+          echo ""
+          echo "=========================================="
+          echo "  Chex Quest PSP - Build Complete!"
+          echo "=========================================="
+          echo ""
+          echo "Per giocare:"
+          echo "1. Copia la cartella ChexQuest nella PSP/GAME/"
+          echo "2. Metti chex.wad dentro ChexQuest/"
+          echo "3. Avvia dal menu della PSP"
+          echo ""
+          ls -la release/ChexQuest/
 
-      - name: Upload EBOOT.PBP
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: chexquest-psp
-          path: |
-            doomgeneric/doomgeneric/EBOOT.PBP
-            doomgeneric/doomgeneric/PARAM.SFO
+          name: ChexQuest-PSP
+          path: release/
