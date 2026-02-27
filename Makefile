@@ -23,16 +23,10 @@ CFLAGS = -std=gnu99 -O2 -G0 -Wall -DPSP -DNORMALUNIX -DFEATURE_SOUND=0 \
          -Wno-enum-conversion -Wno-int-conversion
 
 LIBDIR =
-LIBS = -lpspgu -lpspgum -lpspdisplay -lpspge -lpspctrl \
-       -lpspaudio -lpspaudiolib -lpsppower -lpsprtc \
-       -lpspkernel -lpsputility -lpspnet -lpspuser -lm -lc \
-       -lpspdebug -lpspdisplay -lpspge -lpspctrl \
-       -lpspnet -lpspnet_apctl
 LDFLAGS =
 
-EXTRA_TARGETS = EBOOT.PBP
-PSP_EBOOT_TITLE = Chex Quest PSP
-PSP_EBOOT_SFO = PARAM.SFO
+# SOLO le librerie che servono davvero - NIENTE audio/net/debug
+LIBS = -lpspgu -lpspdisplay -lpspge -lpspctrl -lpsppower -lpsprtc -lm
 
 BUILD_PRX = 1
 PSP_FW_VERSION = 660
