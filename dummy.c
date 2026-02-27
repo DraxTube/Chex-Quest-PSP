@@ -47,30 +47,6 @@ void I_GetEvent(void)
         event.data3 = -1;
         D_PostEvent(&event);
     }
-    void I_GetEvent(void)
-{
-    event_t event;
-    int pressed;
-    unsigned char key;
-
-    while (DG_GetKey(&pressed, &key))
-    {
-        /* DEBUG: logga ogni tasto ricevuto */
-        {
-            extern FILE *dbg_file;
-            if (dbg_file) {
-                fprintf(dbg_file, "KEY: pressed=%d key=%d (0x%02x)\n", pressed, key, key);
-                fflush(dbg_file);
-            }
-        }
-
-        event.type = pressed ? ev_keydown : ev_keyup;
-        event.data1 = key;
-        event.data2 = -1;
-        event.data3 = -1;
-        D_PostEvent(&event);
-    }
-}
 }
 
 /* Joystick (gestito via analog stick in poll_input) */
