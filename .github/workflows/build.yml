@@ -14,16 +14,16 @@ jobs:
       image: pspdev/pspdev:latest
 
     steps:
-      - name: Install system deps
+      - name: Install dependencies
         run: apk add --no-cache make git bash sed coreutils python3
 
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Clone doomgeneric
         run: git clone https://github.com/ozkl/doomgeneric.git
 
-      - name: Patch doomgeneric for PSP
+      - name: Patch doomgeneric sources
         shell: bash
         run: |
           set -euo pipefail
@@ -87,7 +87,8 @@ jobs:
           set -euo pipefail
           cp doomgeneric_psp.c doomgeneric/doomgeneric/doomgeneric_psp.c
           cp Makefile doomgeneric/doomgeneric/Makefile
-          echo "PSP source and Makefile copied"
+          cp dummy.c doomgeneric/doomgeneric/dummy.c
+          echo "PSP source, Makefile and dummy.c copied"
 
       - name: Build
         shell: bash
@@ -101,22 +102,10 @@ jobs:
           ls -la EBOOT.PBP PARAM.SFO 2>/dev/null || { echo "ERROR: EBOOT.PBP or PARAM.SFO not found!"; exit 1; }
           ls -la *.elf *.prx 2>/dev/null || echo "Note: .elf/.prx intermediates may have been cleaned"
 
-      - name: Package
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p release/ChexQuest
-          cp doomgeneric/doomgeneric/EBOOT.PBP release/ChexQuest/
-          if [ -f doomgeneric/doomgeneric/PARAM.SFO ]; then
-            cp doomgeneric/doomgeneric/PARAM.SFO release/ChexQuest/
-          fi
-          echo "Place chex.wad in this folder" > release/ChexQuest/README.txt
-          echo "=== Package contents ==="
-          ls -la release/ChexQuest/
-
-      - name: Upload artifact
+      - name: Upload EBOOT.PBP
         uses: actions/upload-artifact@v4
         with:
-          name: ChexQuest-PSP-EBOOT
-          path: release/
-          retention-days: 90
+          name: chexquest-psp
+          path: |
+            doomgeneric/doomgeneric/EBOOT.PBP
+            doomgeneric/doomgeneric/PARAM.SFO
