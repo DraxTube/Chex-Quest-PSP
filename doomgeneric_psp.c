@@ -9,7 +9,6 @@
 #include <pspdisplay.h>
 #include <pspctrl.h>
 #include <pspgu.h>
-#include <pspgum.h>
 #include <psppower.h>
 #include <psprtc.h>
 
@@ -21,8 +20,8 @@
 /* ==================== PSP Module Info ==================== */
 
 PSP_MODULE_INFO("ChexQuest", 0, 1, 0);
-PSP_MAIN_THREAD_ATTR(THREAD_ATTR_USER | THREAD_ATTR_VFPU);
-PSP_HEAP_SIZE_KB(-1024);  /* Reserve more heap, leave some for system */
+PSP_MAIN_THREAD_ATTR(THREAD_ATTR_USER);
+PSP_HEAP_SIZE_KB(-1);
 
 /* ==================== Constants ==================== */
 
@@ -62,7 +61,7 @@ static void setup_callbacks(void)
 /* ==================== GU / Display ==================== */
 
 static uint32_t __attribute__((aligned(16))) gu_list[262144];
-static uint32_t __attribute__((aligned(16))) tex_buf[512 * 512];
+static uint32_t __attribute__((aligned(16))) tex_buf[512 * 272];
 
 typedef struct {
     unsigned short u, v;
@@ -76,7 +75,6 @@ static void gu_init(void)
 
     sceGuDrawBuffer(GU_PSM_8888, (void *)0, BUF_W);
     sceGuDispBuffer(SCR_W, SCR_H, (void *)FRAME_SIZE, BUF_W);
-    sceGuDepthBuffer((void *)(FRAME_SIZE * 2), BUF_W);
 
     sceGuOffset(2048 - (SCR_W / 2), 2048 - (SCR_H / 2));
     sceGuViewport(2048, 2048, SCR_W, SCR_H);
@@ -117,9 +115,7 @@ static void draw_framebuffer(void)
     if (src_w > SCR_W) src_w = SCR_W;
     if (src_h > SCR_H) src_h = SCR_H;
     if (src_w > 512)   src_w = 512;
-    if (src_h > 512)   src_h = 512;
 
-    /* DoomGeneric: XRGB 0x00RRGGBB  ->  PSP GU: ABGR 0xFFBBGGRR */
     for (y = 0; y < src_h; y++)
     {
         const uint32_t *src = (const uint32_t *)&DG_ScreenBuffer[y * DOOMGENERIC_RESX];
@@ -134,7 +130,7 @@ static void draw_framebuffer(void)
         }
     }
 
-    sceKernelDcacheWritebackInvalidateAll();
+    sceKernelDcacheWritebackAll();
 
     sceGuStart(GU_DIRECT, gu_list);
     sceGuClear(GU_COLOR_BUFFER_BIT);
@@ -348,7 +344,6 @@ int main(int argc, char **argv)
     const char *search_paths[] = {
         "ms0:/PSP/GAME/ChexQuest/chex.wad",
         "ms0:/PSP/GAME/chexquest/chex.wad",
-        "ms0:/PSP/GAME/Chex-Quest-PSP/chex.wad",
         "./chex.wad",
         "chex.wad",
         NULL
@@ -371,18 +366,12 @@ int main(int argc, char **argv)
     default_argv[3] = NULL;
 
     if (argc < 2)
-    {
         doomgeneric_Create(default_argc, default_argv);
-    }
     else
-    {
         doomgeneric_Create(argc, argv);
-    }
 
     while (running)
-    {
         doomgeneric_Tick();
-    }
 
     sceGuTerm();
     sceKernelExitGame();
