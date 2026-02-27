@@ -27,7 +27,6 @@ LDFLAGS =
 
 LIBS = -lpspgu -lpspdisplay -lpspge -lpspctrl -lpsppower -lpsprtc -lm
 
-# Impedisci a build.mak di aggiungere librerie extra (net, debug, ecc.)
 PSPSDK_LIBS =
 
 BUILD_PRX = 1
