@@ -2,9 +2,9 @@ name: Build Chex Quest PSP
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -14,123 +14,77 @@ jobs:
       image: pspdev/pspdev:latest
 
     steps:
-    - name: Install system deps
-      run: |
-        apk add --no-cache make git bash sed patch
+      - name: Install system deps
+        run: apk add --no-cache make git bash sed
 
-    - name: Checkout
-      uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-    - name: Clone doomgeneric
-      run: |
-        git clone https://github.com/ozkl/doomgeneric.git
+      - name: Clone doomgeneric
+        run: git clone https://github.com/ozkl/doomgeneric.git
 
-    - name: Patch doomgeneric for PSP
-      run: |
-        cd doomgeneric/doomgeneric
+      - name: Patch doomgeneric for PSP
+        shell: bash
+        run: |
+          cd doomgeneric/doomgeneric
 
-        echo "=== Patching doomtype.h ==="
-        # Replace the entire boolean typedef to avoid false/true keyword clash
-        cat > /tmp/bool_patch.py << 'PYEOF'
-import re
-with open("doomtype.h", "r") as f:
-            content = f.read()
+          # ---- Fix boolean enum in doomtype.h ----
+          # Replace the entire enum boolean block with typedef + defines
+          sed -i '/typedef.*enum/,/}.*boolean/c\
+          typedef int boolean;\
+          #ifndef true\
+          #define true 1\
+          #endif\
+          #ifndef false\
+          #define false 0\
+          #endif' doomtype.h
 
-        # Remove the enum boolean definition entirely and use simple typedef
-        # Replace the whole enum block
-        content = re.sub(
-            r'typedef\s+enum\s*\{[^}]*false[^}]*true[^}]*\}\s*boolean\s*;',
-            'typedef int boolean;\n#ifndef __cplusplus\n#ifndef true\n#define true 1\n#endif\n#ifndef false\n#define false 0\n#endif\n#endif',
-            content,
-            flags=re.DOTALL
-        )
+          echo "=== doomtype.h patched ==="
+          grep -n "boolean\|true\|false" doomtype.h || true
 
-        with open("doomtype.h", "w") as f:
-            f.write(content)
-        PYEOF
-        python3 /tmp/bool_patch.py
+          # ---- Fix i_system.c ----
+          sed -i '1i #include <pspkernel.h>' i_system.c
+          sed -i 's/#include <signal.h>//' i_system.c
+          sed -i 's/raise(SIGTERM)/sceKernelExitGame()/g' i_system.c
+          sed -i 's/raise(sig)/sceKernelExitGame()/g' i_system.c
 
-        echo "=== Result doomtype.h ==="
-        cat doomtype.h
+          # ---- Fix missing PATH_MAX ----
+          sed -i '1i #include <limits.h>' d_iwad.c
+          sed -i '1i #include <limits.h>' m_misc.c
+          sed -i '1i #include <limits.h>' m_config.c
+          sed -i '1i #include <limits.h>' w_file_stdc.c
 
-        echo "=== Patching i_system.c ==="
-        # PSP doesn't have signal.h the same way
-        sed -i 's/#include <signal.h>/\/\/#include <signal.h>/' i_system.c || true
+          # ---- Disable getenv calls that fail on PSP ----
+          sed -i 's/getenv("HOME")/NULL/g' d_iwad.c
+          sed -i 's/getenv("DOOMWADDIR")/NULL/g' d_iwad.c
+          sed -i 's/getenv("DOOMWADPATH")/NULL/g' d_iwad.c
 
-        # Replace raise(SIGTERM) and similar
-        sed -i 's/raise(SIGTERM)/sceKernelExitGame()/g' i_system.c || true
-        sed -i 's/raise(sig)/sceKernelExitGame()/g' i_system.c || true
+          echo "=== Patching done ==="
 
-        # Add PSP header to i_system.c
-        sed -i '1i #include <pspkernel.h>' i_system.c
+      - name: Copy PSP files
+        run: |
+          cp doomgeneric_psp.c doomgeneric/doomgeneric/doomgeneric_psp.c
+          cp Makefile doomgeneric/doomgeneric/Makefile
 
-        echo "=== Patching d_iwad.c ==="
-        # Add limits.h and disable HOME/path searching that won't work on PSP
-        sed -i '1i #include <limits.h>' d_iwad.c
-        # PSP: getenv won't work meaningfully
-        sed -i 's/getenv("HOME")/NULL/g' d_iwad.c || true
-        sed -i 's/getenv("DOOMWADDIR")/NULL/g' d_iwad.c || true
-        sed -i 's/getenv("DOOMWADPATH")/NULL/g' d_iwad.c || true
+      - name: Build
+        shell: bash
+        run: |
+          cd doomgeneric/doomgeneric
+          export PSPDEV=/usr/local/pspdev
+          export PATH="$PSPDEV/bin:$PATH"
+          make 2>&1
+          echo "=== Checking outputs ==="
+          ls -la EBOOT.PBP PARAM.SFO *.elf *.prx 2>/dev/null || echo "Some files missing"
 
-        echo "=== Patching m_misc.c ==="
-        sed -i '1i #include <limits.h>' m_misc.c
+      - name: Package
+        run: |
+          mkdir -p release/ChexQuest
+          cp doomgeneric/doomgeneric/EBOOT.PBP release/ChexQuest/
+          echo "Place chex.wad in this folder" > release/ChexQuest/README.txt
 
-        echo "=== Patching w_file_stdc.c ==="
-        sed -i '1i #include <limits.h>' w_file_stdc.c || true
-
-        echo "=== Patching m_config.c ==="
-        sed -i '1i #include <limits.h>' m_config.c || true
-
-        echo "=== Checking for other issues ==="
-        # Remove any Windows-specific or Linux-specific WAD search paths
-        # that would cause issues on PSP
-        grep -rn "opendir\|readdir\|glob\|wordexp" *.c || echo "No dir scanning found"
-
-        echo "=== Done patching ==="
-
-    - name: Copy PSP platform file and Makefile
-      run: |
-        cp doomgeneric_psp.c doomgeneric/doomgeneric/doomgeneric_psp.c
-        cp Makefile doomgeneric/doomgeneric/Makefile
-
-    - name: List source files
-      run: |
-        cd doomgeneric/doomgeneric
-        echo "=== Files present ==="
-        ls -la *.c | head -80
-        echo "=== Checking doomtype.h ==="
-        head -80 doomtype.h
-
-    - name: Build
-      run: |
-        cd doomgeneric/doomgeneric
-        export PSPDEV=/usr/local/pspdev
-        export PATH=$PSPDEV/bin:$PATH
-        make 2>&1 || true
-        echo "=== Build artifacts ==="
-        ls -la *.o 2>/dev/null | tail -20
-        ls -la *.elf *.prx EBOOT.PBP PARAM.SFO 2>/dev/null || echo "No final artifacts yet"
-
-    - name: Retry build with verbose errors
-      run: |
-        cd doomgeneric/doomgeneric
-        export PSPDEV=/usr/local/pspdev
-        export PATH=$PSPDEV/bin:$PATH
-        make 2>&1 | tail -60
-
-    - name: Check EBOOT exists
-      run: |
-        ls -la doomgeneric/doomgeneric/EBOOT.PBP
-
-    - name: Package
-      run: |
-        mkdir -p release/ChexQuest
-        cp doomgeneric/doomgeneric/EBOOT.PBP release/ChexQuest/
-        echo "Place chex.wad in this folder" > release/ChexQuest/README.txt
-
-    - name: Upload artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: ChexQuest-PSP-EBOOT
-        path: release/
-        retention-days: 90
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChexQuest-PSP-EBOOT
+          path: release/
+          retention-days: 90
