@@ -1,11 +1,5 @@
 /*
- * doomgeneric_psp.c
- * 
- * PSP platform implementation for doomgeneric.
- * Loads chex.wad (or doom1.wad) and runs Chex Quest on PSP.
- *
- * This is the ONLY file you need to write. Everything else comes
- * from the doomgeneric project.
+ * doomgeneric_psp.c - PSP platform for doomgeneric (Chex Quest)
  */
 
 #include "doomgeneric.h"
@@ -28,7 +22,7 @@
 
 PSP_MODULE_INFO("ChexQuest", 0, 1, 0);
 PSP_MAIN_THREAD_ATTR(THREAD_ATTR_USER | THREAD_ATTR_VFPU);
-PSP_HEAP_SIZE_KB(-1024);  /* Leave 1MB for system, rest is heap */
+PSP_HEAP_SIZE_KB(-1024);
 
 /* ==================== Constants ==================== */
 
@@ -105,15 +99,12 @@ static void gu_init(void)
 
 static void draw_framebuffer(void)
 {
-    int y;
+    int y, x;
 
     if (!DG_ScreenBuffer) return;
 
-    /* Copy DOOM framebuffer into aligned PSP texture
-     * DoomGeneric uses XRGB (0x00RRGGBB) but PSP GU uses ABGR
-     * So we need to swizzle: R<->B and set A=0xFF */
+    /* DoomGeneric: XRGB 0x00RRGGBB  ->  PSP GU: ABGR 0xFFBBGGRR */
     for (y = 0; y < DOOMGENERIC_RESY && y < SCR_H; y++) {
-        int x;
         uint32_t *src = &DG_ScreenBuffer[y * DOOMGENERIC_RESX];
         uint32_t *dst = &tex_buf[y * 512];
         for (x = 0; x < DOOMGENERIC_RESX && x < SCR_W; x++) {
@@ -121,9 +112,11 @@ static void draw_framebuffer(void)
             uint32_t r = (p >> 16) & 0xFF;
             uint32_t g = (p >> 8)  & 0xFF;
             uint32_t b = (p)       & 0xFF;
-            dst[x] = 0xFF000000 | (b << 16) | (g << 8) | r;
+            dst[x] = 0xFF000000u | (b << 16) | (g << 8) | r;
         }
     }
+
+    sceKernelDcacheWritebackInvalidateAll();
 
     sceGuStart(GU_DIRECT, gu_list);
     sceGuClearColor(0xFF000000);
@@ -163,13 +156,12 @@ static SceCtrlData pad_prev;
 static void keyq_push(int pressed, unsigned char doomkey)
 {
     int next = (keyq_head + 1) % KEYQ_SIZE;
-    if (next == keyq_tail) return;  /* full */
+    if (next == keyq_tail) return;
     keyq[keyq_head].pressed = pressed;
     keyq[keyq_head].key = doomkey;
     keyq_head = next;
 }
 
-/* Map one PSP button to a DOOM key */
 static void check_btn(uint32_t old_b, uint32_t new_b,
                        uint32_t mask, unsigned char doomkey)
 {
@@ -180,26 +172,13 @@ static void check_btn(uint32_t old_b, uint32_t new_b,
 static void poll_input(void)
 {
     SceCtrlData pad;
+    int ax, ay, oax, oay;
+    int thr = 50;
+
     sceCtrlPeekBufferPositive(&pad, 1);
 
     uint32_t ob = pad_prev.Buttons;
     uint32_t nb = pad.Buttons;
-
-    /*
-     * PSP mapping for Chex Quest (Doom-style FPS):
-     *
-     *  D-Pad Up/Down    = Forward / Back
-     *  D-Pad Left/Right = Turn left / right
-     *  Analog stick     = same as dpad
-     *  Cross (X)        = Fire (shoot zorcher)
-     *  Circle (O)       = Use / Open doors
-     *  Square           = Strafe left
-     *  Triangle         = Strafe right  (or run)
-     *  L Trigger        = Strafe left
-     *  R Trigger        = Strafe right
-     *  Start            = Escape (menu)
-     *  Select           = Tab (automap)
-     */
 
     check_btn(ob, nb, PSP_CTRL_UP,       KEY_UPARROW);
     check_btn(ob, nb, PSP_CTRL_DOWN,     KEY_DOWNARROW);
@@ -214,12 +193,10 @@ static void poll_input(void)
     check_btn(ob, nb, PSP_CTRL_START,    KEY_ESCAPE);
     check_btn(ob, nb, PSP_CTRL_SELECT,   KEY_TAB);
 
-    /* Analog stick -> dpad keys */
-    int ax = pad.Lx - 128;
-    int ay = pad.Ly - 128;
-    int oax = pad_prev.Lx - 128;
-    int oay = pad_prev.Ly - 128;
-    int thr = 50;
+    ax = pad.Lx - 128;
+    ay = pad.Ly - 128;
+    oax = pad_prev.Lx - 128;
+    oay = pad_prev.Ly - 128;
 
     if (ax < -thr && oax >= -thr)  keyq_push(1, KEY_LEFTARROW);
     if (ax >= -thr && oax < -thr)  keyq_push(0, KEY_LEFTARROW);
@@ -283,18 +260,6 @@ void DG_SetWindowTitle(const char *title)
 
 int main(int argc, char **argv)
 {
-    /*
-     * doomgeneric cerca "doom1.wad" di default.
-     * Chex Quest usa un WAD compatibile con Doom.
-     * Basta rinominare chex.wad -> doom1.wad oppure
-     * passare -iwad chex.wad come argomento.
-     *
-     * Su PSP il WAD va nella stessa cartella dell'EBOOT.PBP:
-     *   ms0:/PSP/GAME/ChexQuest/EBOOT.PBP
-     *   ms0:/PSP/GAME/ChexQuest/chex.wad
-     */
-
-    /* Se non ci sono argomenti, forziamo il caricamento di chex.wad */
     if (argc < 2) {
         char *new_argv[] = {
             "chexquest",
@@ -306,7 +271,6 @@ int main(int argc, char **argv)
         doomgeneric_Create(argc, argv);
     }
 
-    /* Main loop */
     while (running) {
         doomgeneric_Tick();
     }
