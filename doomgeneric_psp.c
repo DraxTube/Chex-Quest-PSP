@@ -248,12 +248,32 @@ static void draw_framebuffer(void)
 
 #define KEYQ_SIZE 256
 
-/* Fallback se doomkeys.h non definisce F6/F9 */
+/* Fallback per chiavi doomgeneric */
+#ifndef KEY_FIRE
+#define KEY_FIRE        0xa2
+#endif
+#ifndef KEY_USE
+#define KEY_USE         0xa3
+#endif
+#ifndef KEY_STRAFE_L
+#ifdef KEY_STRAFELEFT
+#define KEY_STRAFE_L    KEY_STRAFELEFT
+#else
+#define KEY_STRAFE_L    0xa0
+#endif
+#endif
+#ifndef KEY_STRAFE_R
+#ifdef KEY_STRAFERIGHT
+#define KEY_STRAFE_R    KEY_STRAFERIGHT
+#else
+#define KEY_STRAFE_R    0xa1
+#endif
+#endif
 #ifndef KEY_F6
-#define KEY_F6 (0x80+0x40)
+#define KEY_F6          (0x80+0x40)
 #endif
 #ifndef KEY_F9
-#define KEY_F9 (0x80+0x43)
+#define KEY_F9          (0x80+0x43)
 #endif
 
 static struct {
@@ -265,7 +285,7 @@ static int keyq_head = 0;
 static int keyq_tail = 0;
 static SceCtrlData pad_prev;
 static int pad_initialized = 0;
-static int current_weapon = 1;   /* Per ciclare armi 1-7 */
+static int current_weapon = 1;
 
 static void keyq_push(int pressed, unsigned char doomkey)
 {
@@ -312,7 +332,7 @@ static void poll_input(void)
     {
         int was, now;
 
-        /* D-pad Destra: arma successiva */
+        /* Destra: arma successiva */
         was = (ob & PSP_CTRL_RIGHT) != 0;
         now = (nb & PSP_CTRL_RIGHT) != 0;
         if (now && !was)
@@ -323,7 +343,7 @@ static void poll_input(void)
             keyq_push(0, '0' + current_weapon);
         }
 
-        /* D-pad Sinistra: arma precedente */
+        /* Sinistra: arma precedente */
         was = (ob & PSP_CTRL_LEFT) != 0;
         now = (nb & PSP_CTRL_LEFT) != 0;
         if (now && !was)
@@ -334,7 +354,7 @@ static void poll_input(void)
             keyq_push(0, '0' + current_weapon);
         }
 
-        /* D-pad Su: Quick Save (F6) */
+        /* Su: Quick Save (F6) */
         was = (ob & PSP_CTRL_UP) != 0;
         now = (nb & PSP_CTRL_UP) != 0;
         if (now && !was)
@@ -343,7 +363,7 @@ static void poll_input(void)
             keyq_push(0, KEY_F6);
         }
 
-        /* D-pad Giù: Quick Load (F9) */
+        /* Giu: Quick Load (F9) */
         was = (ob & PSP_CTRL_DOWN) != 0;
         now = (nb & PSP_CTRL_DOWN) != 0;
         if (now && !was)
@@ -353,23 +373,23 @@ static void poll_input(void)
         }
     }
 
-    /* ===== BOTTONI AZIONE ===== */
-    check_btn(ob, nb, PSP_CTRL_CROSS,    KEY_RCTRL);    /* Fuoco */
-    check_btn(ob, nb, PSP_CTRL_CROSS,    KEY_ENTER);    /* Conferma menu */
-    check_btn(ob, nb, PSP_CTRL_CROSS,    'y');           /* Sì per prompt */
-    check_btn(ob, nb, PSP_CTRL_CIRCLE,   ' ');           /* Usa / Apri */
-    check_btn(ob, nb, PSP_CTRL_TRIANGLE, KEY_RSHIFT);    /* Corri */
-    check_btn(ob, nb, PSP_CTRL_SQUARE,   KEY_TAB);       /* Automap */
+    /* ===== BOTTONI: usa KEY_FIRE/KEY_USE del motore! ===== */
+    check_btn(ob, nb, PSP_CTRL_CROSS,    KEY_FIRE);      /* Spara */
+    check_btn(ob, nb, PSP_CTRL_CROSS,    KEY_ENTER);      /* Conferma menu */
+    check_btn(ob, nb, PSP_CTRL_CROSS,    'y');             /* Si ai prompt */
+    check_btn(ob, nb, PSP_CTRL_CIRCLE,   KEY_USE);         /* Usa / Apri */
+    check_btn(ob, nb, PSP_CTRL_SQUARE,   KEY_TAB);         /* Automap */
+    check_btn(ob, nb, PSP_CTRL_TRIANGLE, KEY_RSHIFT);      /* Corri */
 
     /* ===== TRIGGER: Strafe ===== */
-    check_btn(ob, nb, PSP_CTRL_LTRIGGER, ',');            /* Strafe sx */
-    check_btn(ob, nb, PSP_CTRL_RTRIGGER, '.');            /* Strafe dx */
+    check_btn(ob, nb, PSP_CTRL_LTRIGGER, KEY_STRAFE_L);
+    check_btn(ob, nb, PSP_CTRL_RTRIGGER, KEY_STRAFE_R);
 
     /* ===== START / SELECT ===== */
-    check_btn(ob, nb, PSP_CTRL_START,    KEY_ESCAPE);    /* Menu */
-    check_btn(ob, nb, PSP_CTRL_SELECT,   KEY_ENTER);     /* Conferma alt */
+    check_btn(ob, nb, PSP_CTRL_START,    KEY_ESCAPE);
+    check_btn(ob, nb, PSP_CTRL_SELECT,   KEY_ENTER);
 
-    /* ===== ANALOG STICK: Movimento ===== */
+    /* ===== ANALOG STICK ===== */
     ax = (int)pad.Lx - 128;
     ay = (int)pad.Ly - 128;
 
