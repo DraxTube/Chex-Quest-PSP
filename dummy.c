@@ -14,12 +14,12 @@ typedef struct wbstartstruct_s wbstartstruct_t;
 int snd_musicdevice = 0;
 int vanilla_keyboard_mapping = 1;
 
-// Network variables (NEW - fixes d_loop.c and d_main.c)
-boolean drone = false;
-boolean net_client_connected = false;
+// Network variables
+boolean drone = 0;
+boolean net_client_connected = 0;
 
 // Sound
-boolean I_SoundIsPlaying(int handle) { return false; }
+boolean I_SoundIsPlaying(int handle) { return 0; }
 int I_GetSfxLumpNum(sfxinfo_t *sfx) { return 0; }
 int I_StartSound(sfxinfo_t *sfxinfo, int channel, int vol, int sep, int pitch) { return 0; }
 void I_StopSound(int handle) {}
@@ -40,15 +40,22 @@ void *I_RegisterSong(void *data, int len) { return (void*)0; }
 void I_UnRegisterSong(void *handle) {}
 void I_PlaySong(void *handle, boolean looping) {}
 void I_StopSong(void) {}
-boolean I_MusicIsPlaying(void) { return false; }
+boolean I_MusicIsPlaying(void) { return 0; }
 
 // Joystick
 void I_InitJoystick(void) {}
 void I_BindJoystickVariables(void) {}
 
-// Input
+// Input - IMPORTANT: these must exist but stay empty
+// The actual input is handled by poll_input() in doomgeneric_psp.c
+// which feeds the key queue read by DG_GetKey()
 void I_InitInput(void) {}
 void I_GetEvent(void) {}
+
+// Video - i_video stubs if not already provided
+// These may already be defined in i_video.c, if so remove from here
+// void I_InitGraphics(void) {}
+// void I_ShutdownGraphics(void) {}
 
 // Misc
 void I_Endoom(byte *endoom_data) {}
