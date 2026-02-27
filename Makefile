@@ -14,7 +14,6 @@ OBJS = am_map.o d_event.o d_items.o d_iwad.o d_loop.o d_main.o d_mode.o \
        w_main.o w_wad.o wi_stuff.o z_zone.o doomgeneric_psp.o
 
 INCDIR =
-
 CFLAGS = -std=gnu99 -O2 -G0 -Wall -DPSP -DNORMALUNIX -DFEATURE_SOUND=0 \
          -DDOOMGENERIC_RESX=480 -DDOOMGENERIC_RESY=272 \
          -Wno-unused-variable -Wno-unused-parameter -Wno-pointer-sign \
@@ -24,17 +23,19 @@ CFLAGS = -std=gnu99 -O2 -G0 -Wall -DPSP -DNORMALUNIX -DFEATURE_SOUND=0 \
          -Wno-enum-conversion -Wno-int-conversion
 
 LIBDIR =
+LIBS = -lpspgu -lpspgum -lpspdisplay -lpspge -lpspctrl \
+       -lpspaudio -lpspaudiolib -lpsppower -lpsprtc \
+       -lpspkernel -lpsputility -lpspnet -lpspuser -lm -lc \
+       -lpspdebug -lpspdisplay -lpspge -lpspctrl \
+       -lpspnet -lpspnet_apctl
 LDFLAGS =
-
-LIBS = -lpspgu -lpspgum -lpspdisplay -lpspge -lpspctrl -lpspaudio \
-       -lpspaudiolib -lpsppower -lpsprtc -lpspkernel -lpsputility \
-       -lpspnet -lpspuser -lm -lc -lpspdebug -lpspdisplay -lpspge \
-       -lpspctrl -lpspnet -lpspnet_apctl
 
 BUILD_PRX = 1
 PSP_FW_VERSION = 660
 
-PSP_EBOOT_TITLE = Chex Quest
+PSP_EBOOT_TITLE = Chex Quest PSP
+# PSP_EBOOT_ICON = ICON0.PNG
+# PSP_EBOOT_PIC1 = PIC1.PNG
 
 PSPSDK = $(shell psp-config --pspsdk-path)
 include $(PSPSDK)/lib/build.mak
