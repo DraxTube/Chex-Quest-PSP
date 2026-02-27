@@ -15,7 +15,7 @@ jobs:
     steps:
       - name: Install dependencies
         run: |
-          apk add --no-cache make git bash sed coreutils python3 imagemagick
+          apk add --no-cache make git bash sed coreutils python3 imagemagick libwebp-tools
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -85,7 +85,7 @@ jobs:
           # ICON0.PNG - 144x80 (icona nel menu XMB)
           if [ -f "assets/icon.webp" ]; then
             echo "Converting assets/icon.webp -> ICON0.PNG (144x80)"
-            convert "assets/icon.webp" \
+            magick "assets/icon.webp" \
               -resize 144x80! \
               -background black \
               -flatten \
@@ -100,7 +100,7 @@ jobs:
           # PIC0.PNG - 310x180 (sfondo info quando premi triangolo)
           if [ -f "assets/pic0.webp" ]; then
             echo "Converting assets/pic0.webp -> PIC0.PNG (310x180)"
-            convert "assets/pic0.webp" \
+            magick "assets/pic0.webp" \
               -resize 310x180! \
               -background black \
               -flatten \
