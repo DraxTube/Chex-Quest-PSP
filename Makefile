@@ -9,7 +9,6 @@ COMMON_SRC = \
 	d_main.c \
 	d_mode.c \
 	d_net.c \
-	deh_str.c \
 	doomdef.c \
 	doomgeneric.c \
 	doomstat.c \
@@ -18,19 +17,11 @@ COMMON_SRC = \
 	f_finale.c \
 	f_wipe.c \
 	g_game.c \
-	gusconf.c \
 	hu_lib.c \
 	hu_stuff.c \
-	i_cdmus.c \
-	i_endoom.c \
-	i_input.c \
-	i_joystick.c \
-	i_scale.c \
-	i_sound.c \
 	i_system.c \
 	i_timer.c \
 	i_video.c \
-	icon.c \
 	info.c \
 	m_argv.c \
 	m_bbox.c \
@@ -75,7 +66,6 @@ COMMON_SRC = \
 	sounds.c \
 	st_lib.c \
 	st_stuff.c \
-	statdump.c \
 	tables.c \
 	v_video.c \
 	w_checksum.c \
@@ -90,15 +80,13 @@ PSP_SRC = doomgeneric_psp.c
 
 OBJS = $(COMMON_SRC:.c=.o) $(PSP_SRC:.c=.o)
 
-# PSP SDK path - must be resolved before everything else
+# PSP SDK path
 PSPSDK = $(shell psp-config --pspsdk-path)
 
 INCDIR = $(PSPSDK)/include
 CFLAGS = -std=gnu99 -O2 -G0 -Wall -DPSP -DNORMALUNIX
 CFLAGS += -DFEATURE_SOUND=0
 CFLAGS += -DDOOMGENERIC_RESX=480 -DDOOMGENERIC_RESY=272
-CFLAGS += -DPACKAGE_NAME=\"chexquest\" -DPACKAGE_TARNAME=\"chexquest\"
-CFLAGS += -DPACKAGE_VERSION=\"1.0\" -DPACKAGE_STRING=\"chexquest\ 1.0\"
 CFLAGS += -Wno-unused-variable -Wno-unused-parameter -Wno-pointer-sign
 CFLAGS += -Wno-missing-braces -Wno-implicit-function-declaration
 CFLAGS += -Wno-char-subscripts -Wno-sign-compare -Wno-format
