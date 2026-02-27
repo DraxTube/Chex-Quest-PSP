@@ -1,10 +1,11 @@
 /*
  * psp_sound.c - Audio per Chex Quest PSP
  * Effetti sonori con mixing software + output hardware PSP
- * Musica: stub (non implementata)
+ * Corretto per doomgeneric API (I_StartSound a 4 parametri, no sfxinfo->data)
  */
 
 #include "doomtype.h"
+#include "i_sound.h"
 #include "sounds.h"
 #include "w_wad.h"
 #include "z_zone.h"
@@ -17,21 +18,21 @@
 
 /* ==================== Costanti ==================== */
 
-#define SND_CHANNELS    8       /* Canali di mixing simultanei */
-#define MIX_SAMPLES     512     /* Campioni per blocco (multiplo di 64) */
-#define OUTPUT_RATE     48000   /* Frequenza output hardware PSP */
+#define SND_CHANNELS    8
+#define MIX_SAMPLES     512
+#define OUTPUT_RATE     48000
 
 /* ==================== Canale audio ==================== */
 
 typedef struct {
-    const uint8_t  *pcm;       /* Dati PCM unsigned 8-bit */
-    int             length;    /* Lunghezza in campioni sorgente */
-    uint32_t        pos;       /* Posizione corrente (16.16 fixed point) */
-    uint32_t        step;      /* Passo di avanzamento (16.16 fixed point) */
-    int             vol;       /* Volume 0-127 */
-    int             sep;       /* Separazione stereo 0-255 (128=centro) */
-    int             handle;    /* Handle univoco */
-    int             active;    /* 1 = in riproduzione */
+    const uint8_t  *pcm;
+    int             length;
+    uint32_t        pos;
+    uint32_t        step;
+    int             vol;
+    int             sep;
+    int             handle;
+    int             active;
 } snd_ch_t;
 
 static snd_ch_t snd_channels[SND_CHANNELS];
@@ -39,6 +40,10 @@ static int psp_audio_ch = -1;
 static volatile int snd_running = 0;
 static SceUID snd_thread_id = -1;
 static int next_handle = 1;
+
+/* Cache dati audio per ogni lump */
+static void *sfx_cache[2048];
+static int sfx_cache_init = 0;
 
 static int16_t __attribute__((aligned(64))) mix_buf[MIX_SAMPLES * 2];
 
@@ -64,7 +69,6 @@ static int snd_mix_thread(SceSize args, void *argp)
                 if (!snd_channels[c].active)
                     continue;
 
-                /* Posizione nel buffer sorgente */
                 idx = (int)(snd_channels[c].pos >> 16);
                 if (idx >= snd_channels[c].length)
                 {
@@ -72,16 +76,12 @@ static int snd_mix_thread(SceSize args, void *argp)
                     continue;
                 }
 
-                /* Converti da unsigned 8-bit a signed 16-bit */
                 sample = ((int)snd_channels[c].pcm[idx] - 128) << 8;
 
-                /* Avanza posizione (resampling) */
                 snd_channels[c].pos += snd_channels[c].step;
 
-                /* Applica volume (0-127) */
                 sample = (sample * snd_channels[c].vol) / 127;
 
-                /* Applica separazione stereo */
                 lv = 255 - snd_channels[c].sep;
                 rv = snd_channels[c].sep;
 
@@ -89,7 +89,6 @@ static int snd_mix_thread(SceSize args, void *argp)
                 mix_r += (sample * rv) / 255;
             }
 
-            /* Clamp a 16-bit */
             if (mix_l >  32767) mix_l =  32767;
             if (mix_l < -32768) mix_l = -32768;
             if (mix_r >  32767) mix_r =  32767;
@@ -111,6 +110,12 @@ void I_InitSound(boolean use_sfx_prefix)
     (void)use_sfx_prefix;
 
     memset(snd_channels, 0, sizeof(snd_channels));
+
+    if (!sfx_cache_init)
+    {
+        memset(sfx_cache, 0, sizeof(sfx_cache));
+        sfx_cache_init = 1;
+    }
 
     psp_audio_ch = sceAudioChReserve(PSP_AUDIO_NEXT_CHANNEL,
                                       MIX_SAMPLES,
@@ -154,26 +159,34 @@ int I_GetSfxLumpNum(sfxinfo_t *sfx)
     return W_GetNumForName(namebuf);
 }
 
-int I_StartSound(sfxinfo_t *sfxinfo, int channel, int vol, int sep, int pitch)
+/*
+ * I_StartSound - firma corretta per doomgeneric: 4 parametri, NO pitch
+ */
+int I_StartSound(sfxinfo_t *sfxinfo, int channel, int vol, int sep)
 {
+    void *raw_data;
     unsigned char *raw;
+    int lumpnum;
     int rate, length, format_tag;
     int slot, handle;
 
     if (!sfxinfo || !snd_running)
         return -1;
 
-    /* Carica dati dal WAD se necessario */
-    if (!sfxinfo->data)
-    {
-        if (sfxinfo->lumpnum < 0)
-            return -1;
-        sfxinfo->data = W_CacheLumpNum(sfxinfo->lumpnum, PU_STATIC);
-    }
-    if (!sfxinfo->data)
+    /* Ottieni il numero del lump */
+    lumpnum = sfxinfo->lumpnum;
+    if (lumpnum < 0 || lumpnum >= 2048)
         return -1;
 
-    raw = (unsigned char *)sfxinfo->data;
+    /* Carica dati dal WAD usando cache locale */
+    if (!sfx_cache[lumpnum])
+        sfx_cache[lumpnum] = W_CacheLumpNum(lumpnum, PU_STATIC);
+
+    raw_data = sfx_cache[lumpnum];
+    if (!raw_data)
+        return -1;
+
+    raw = (unsigned char *)raw_data;
 
     /* Verifica header formato Doom (tag = 0x0003) */
     format_tag = raw[0] | (raw[1] << 8);
@@ -186,11 +199,7 @@ int I_StartSound(sfxinfo_t *sfxinfo, int channel, int vol, int sep, int pitch)
 
     if (rate == 0) rate = 11025;
     if (length <= 8) return -1;
-    length -= 8;  /* Sottrai header */
-
-    /* Applica pitch (128 = normale) */
-    if (pitch <= 0) pitch = 128;
-    rate = (rate * pitch) / 128;
+    length -= 8;
 
     /* Usa il canale richiesto dal motore, oppure cerca uno libero */
     if (channel >= 0 && channel < SND_CHANNELS)
@@ -211,15 +220,12 @@ int I_StartSound(sfxinfo_t *sfxinfo, int channel, int vol, int sep, int pitch)
 
     handle = next_handle++;
 
-    /* Clamp volume */
     if (vol < 0)   vol = 0;
     if (vol > 127) vol = 127;
-
-    /* Clamp separazione */
     if (sep < 0)   sep = 0;
     if (sep > 255) sep = 255;
 
-    snd_channels[slot].pcm    = raw + 8;   /* Salta header 8 byte */
+    snd_channels[slot].pcm    = raw + 8;
     snd_channels[slot].length = length;
     snd_channels[slot].pos    = 0;
     snd_channels[slot].step   = ((uint32_t)rate << 16) / OUTPUT_RATE;
@@ -276,15 +282,13 @@ void I_UpdateSoundParams(int channel, int vol, int sep)
 void I_PrecacheSounds(sfxinfo_t *sounds, int num_sounds)
 {
     (void)sounds; (void)num_sounds;
-    /* I suoni vengono caricati on-demand in I_StartSound */
 }
 
 void I_BindSoundVariables(void)
 {
-    /* Nessuna variabile config da registrare */
 }
 
-/* ==================== Musica (stub — non implementata) ==================== */
+/* ==================== Musica (stub) ==================== */
 
 void I_InitMusic(void)          {}
 void I_ShutdownMusic(void)      {}
