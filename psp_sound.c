@@ -30,7 +30,6 @@
 
 #define OPL_RATE        49716
 #define OPL_CHANNELS    9
-#define OPL_NUM_OPS     18
 
 #define SINE_TABLE_SIZE 256
 #define EXP_TABLE_SIZE  256
@@ -47,7 +46,6 @@
 #define WAVE_QUARTSINE  3
 
 #define ENV_MAX         511
-#define ENV_BITS        9
 
 /* ==================== OPL2 Operator ==================== */
 
@@ -70,7 +68,6 @@ typedef struct {
     int         env_stage;
     int32_t     env_level;
     int         key_on;
-    int         key_scale_rate;
 } opl_op_t;
 
 /* ==================== OPL2 Channel ==================== */
@@ -95,33 +92,34 @@ typedef struct {
     int32_t     exp_table[EXP_TABLE_SIZE];
     int32_t     logsin_table[SINE_TABLE_SIZE];
     uint32_t    sample_cnt;
-    int         tremolo_phase;
-    int         vibrato_phase;
 } opl_chip_t;
 
 static opl_chip_t opl;
 
 /* ==================== GENMIDI Structures ==================== */
 
+/* Operatore OPL2 come memorizzato in GENMIDI (5 byte) */
 typedef struct {
-    uint8_t     modulator_tremolo;
-    uint8_t     carrier_tremolo;
-    uint8_t     modulator_level;
-    uint8_t     carrier_level;
-    uint8_t     modulator_attack;
-    uint8_t     carrier_attack;
-    uint8_t     modulator_sustain;
-    uint8_t     carrier_sustain;
-    uint8_t     modulator_wave;
-    uint8_t     carrier_wave;
-    uint8_t     feedback;
-} genmidi_voice_t;
+    uint8_t     mult;       /* AM/VIB/EGT/KSR/MULT */
+    uint8_t     ksl_tl;     /* KSL/TL */
+    uint8_t     ad;         /* AR/DR */
+    uint8_t     sr;         /* SL/RR */
+    uint8_t     ws;         /* Waveform */
+} genmidi_op_data_t;
 
+/* Voice GENMIDI (11 byte) */
 typedef struct {
-    uint16_t    flags;
-    uint8_t     fine_tuning;
-    uint8_t     fixed_note;
-    genmidi_voice_t voice[2];
+    genmidi_op_data_t   mod;
+    genmidi_op_data_t   car;
+    uint8_t             feedback;   /* bits 1-3: feedback, bit 0: algorithm */
+} genmidi_voice_data_t;
+
+/* Strumento GENMIDI (26 byte) */
+typedef struct {
+    uint16_t            flags;
+    uint8_t             fine_tuning;
+    uint8_t             fixed_note;
+    genmidi_voice_data_t voice[2];
 } genmidi_instr_t;
 
 #define GENMIDI_NUM_INSTRS  175
@@ -296,7 +294,8 @@ static int32_t opl_lookup_logsin(int waveform, uint32_t phase)
     switch (waveform)
     {
     case WAVE_SINE:
-        if (phase >= 512) negate = 1;
+        if (phase >= 512)
+            negate = 1;
         if (phase >= 256 && phase < 512)
             idx = 511 - phase;
         else if (phase >= 512 && phase < 768)
@@ -336,8 +335,10 @@ static int32_t opl_lookup_logsin(int waveform, uint32_t phase)
         break;
     }
     
-    if (idx < 0) idx = 0;
-    if (idx >= SINE_TABLE_SIZE) idx = SINE_TABLE_SIZE - 1;
+    if (idx < 0)
+        idx = 0;
+    if (idx >= SINE_TABLE_SIZE)
+        idx = SINE_TABLE_SIZE - 1;
     
     result = opl.logsin_table[idx];
     
@@ -392,7 +393,8 @@ static void opl_env_advance(opl_op_t *op)
         {
             rate = attack_rate[op->ar];
             inc = rate + (rate * (ENV_MAX - op->env_level)) / 256;
-            if (inc < 1) inc = 1;
+            if (inc < 1)
+                inc = 1;
             
             op->env_level -= inc;
             if (op->env_level <= 0)
@@ -426,7 +428,8 @@ static void opl_env_advance(opl_op_t *op)
         if (!op->egt)
         {
             rate = decay_rate[op->rr];
-            if (rate < 1) rate = 1;
+            if (rate < 1)
+                rate = 1;
             op->env_level += rate;
             if (op->env_level >= ENV_MAX)
             {
@@ -438,7 +441,8 @@ static void opl_env_advance(opl_op_t *op)
         
     case ENV_RELEASE:
         rate = decay_rate[op->rr];
-        if (rate < 1) rate = 1;
+        if (rate < 1)
+            rate = 1;
         rate = rate * 2;
         
         op->env_level += rate;
@@ -493,49 +497,66 @@ static void opl_key_off(int ch)
     c->op[1].key_on = 0;
 }
 
-/* ==================== OPL2 Set Frequency ==================== */
+/* ==================== OPL2 Set Frequency (CORRECTED) ==================== */
 
 static void opl_set_freq(int ch, int fnum, int block)
 {
     opl_ch_t *c = &opl.channels[ch];
-    uint64_t freq_hz;
-    uint32_t phase_inc;
+    uint64_t phase_inc_64;
+    uint32_t base_inc;
     
     c->freq = fnum;
     c->octave = block;
     
-    freq_hz = ((uint64_t)fnum * OPL_RATE) >> (20 - block);
+    /*
+     * Formula OPL2: freq = fnum * 2^(block-1) * OPL_RATE / 2^20
+     * 
+     * Per un accumulatore di fase a 32 bit dove usiamo i bit 22-31 come indice:
+     * phase_inc = freq * 2^32 / OUTPUT_RATE
+     *           = fnum * 2^(block-1) * OPL_RATE * 2^32 / (2^20 * OUTPUT_RATE)
+     *           = fnum * OPL_RATE * 2^(block + 11) / OUTPUT_RATE
+     */
     
-    phase_inc = (uint32_t)((freq_hz << 10) / OUTPUT_RATE);
+    phase_inc_64 = (uint64_t)fnum * OPL_RATE;
     
-    c->op[0].phase_inc = phase_inc * mult_table[c->op[0].mult];
-    c->op[1].phase_inc = phase_inc * mult_table[c->op[1].mult];
+    if (block > 0)
+        phase_inc_64 <<= (block + 11);
+    else
+        phase_inc_64 <<= 11;
+    
+    phase_inc_64 /= OUTPUT_RATE;
+    
+    base_inc = (uint32_t)phase_inc_64;
+    
+    c->op[0].phase_inc = base_inc * mult_table[c->op[0].mult];
+    c->op[1].phase_inc = base_inc * mult_table[c->op[1].mult];
 }
 
-/* ==================== OPL2 Program Operator ==================== */
+/* ==================== OPL2 Program Operator from GENMIDI ==================== */
 
-static void opl_program_op(opl_op_t *op, uint8_t tremolo_byte,
-                            uint8_t level_byte,
-                            uint8_t attack_byte,
-                            uint8_t sustain_byte,
-                            uint8_t wave_byte)
+static void opl_program_op_from_data(opl_op_t *op, const genmidi_op_data_t *data)
 {
-    op->am   = (tremolo_byte >> 7) & 1;
-    op->vib  = (tremolo_byte >> 6) & 1;
-    op->egt  = (tremolo_byte >> 5) & 1;
-    op->ksr  = (tremolo_byte >> 4) & 1;
-    op->mult = tremolo_byte & 0x0F;
+    /* mult byte: bit 7=AM, bit 6=VIB, bit 5=EGT, bit 4=KSR, bits 0-3=MULT */
+    op->am   = (data->mult >> 7) & 1;
+    op->vib  = (data->mult >> 6) & 1;
+    op->egt  = (data->mult >> 5) & 1;
+    op->ksr  = (data->mult >> 4) & 1;
+    op->mult = data->mult & 0x0F;
     
-    op->ksl = (level_byte >> 6) & 3;
-    op->tl  = level_byte & 0x3F;
+    /* ksl_tl byte: bits 6-7=KSL, bits 0-5=TL */
+    op->ksl = (data->ksl_tl >> 6) & 3;
+    op->tl  = data->ksl_tl & 0x3F;
     
-    op->ar = (attack_byte >> 4) & 0x0F;
-    op->dr = attack_byte & 0x0F;
+    /* ad byte: bits 4-7=AR, bits 0-3=DR */
+    op->ar = (data->ad >> 4) & 0x0F;
+    op->dr = data->ad & 0x0F;
     
-    op->sl = (sustain_byte >> 4) & 0x0F;
-    op->rr = sustain_byte & 0x0F;
+    /* sr byte: bits 4-7=SL, bits 0-3=RR */
+    op->sl = (data->sr >> 4) & 0x0F;
+    op->rr = data->sr & 0x0F;
     
-    op->waveform = wave_byte & 0x03;
+    /* ws byte: bits 0-1=waveform */
+    op->waveform = data->ws & 0x03;
 }
 
 /* ==================== OPL2 Generate Sample ==================== */
@@ -546,8 +567,6 @@ static int32_t opl_generate_sample(void)
     int32_t output = 0;
     
     opl.sample_cnt++;
-    opl.tremolo_phase = (opl.tremolo_phase + 1) % 8192;
-    opl.vibrato_phase = (opl.vibrato_phase + 1) % 4096;
     
     for (ch = 0; ch < OPL_CHANNELS; ch++)
     {
@@ -569,6 +588,7 @@ static int32_t opl_generate_sample(void)
         mod->phase += mod->phase_inc;
         car->phase += car->phase_inc;
         
+        /* Usa i bit 22-31 come indice a 10 bit */
         mod_phase_10 = (mod->phase >> 22) & 0x3FF;
         
         if (c->feedback > 0)
@@ -580,7 +600,8 @@ static int32_t opl_generate_sample(void)
         
         mod_env = mod->env_level;
         mod_atten = mod_env + (mod->tl << 3);
-        if (mod_atten > 4095) mod_atten = 4095;
+        if (mod_atten > 4095)
+            mod_atten = 4095;
         
         {
             int32_t logval = opl_lookup_logsin(mod->waveform, mod_phase_10);
@@ -595,13 +616,15 @@ static int32_t opl_generate_sample(void)
         
         if (c->algorithm == 0)
         {
-            int32_t mod_scaled = mod_out >> 3;
+            /* FM: modulator modula il carrier */
+            int32_t mod_scaled = mod_out >> 2;
             car_phase_10 = (car_phase_10 + mod_scaled) & 0x3FF;
         }
         
         car_env = car->env_level;
         car_atten = car_env + (car->tl << 3) + c->vol_atten;
-        if (car_atten > 4095) car_atten = 4095;
+        if (car_atten > 4095)
+            car_atten = 4095;
         
         {
             int32_t logval = opl_lookup_logsin(car->waveform, car_phase_10);
@@ -619,19 +642,24 @@ static int32_t opl_generate_sample(void)
         }
     }
     
-    output >>= 4;
+    /* Scala output */
+    output >>= 3;
     
+    /* Applica volume musica */
     output = (output * mus.music_volume) >> 7;
     
+    /* Amplifica */
     output <<= 1;
     
-    if (output > 32767) output = 32767;
-    if (output < -32768) output = -32768;
+    if (output > 32767)
+        output = 32767;
+    if (output < -32768)
+        output = -32768;
     
     return output;
 }
 
-/* ==================== GENMIDI Loading ==================== */
+/* ==================== GENMIDI Loading (CORRECTED) ==================== */
 
 static void load_genmidi(void)
 {
@@ -652,7 +680,8 @@ static void load_genmidi(void)
     data = (const uint8_t *)W_CacheLumpNum(lumpnum, PU_STATIC);
     len = W_LumpLength(lumpnum);
     
-    if (len < (int)(GENMIDI_HEADER_SIZE + sizeof(genmidi_instr_t) * GENMIDI_NUM_INSTRS))
+    /* Header (8) + 175 strumenti * 26 byte = 4558 byte minimo */
+    if (len < GENMIDI_HEADER_SIZE + (26 * GENMIDI_NUM_INSTRS))
     {
         genmidi_loaded = -1;
         return;
@@ -665,31 +694,40 @@ static void load_genmidi(void)
     }
     
     pos = GENMIDI_HEADER_SIZE;
+    
     for (i = 0; i < GENMIDI_NUM_INSTRS; i++)
     {
         const uint8_t *p = &data[pos];
         int v;
         
+        /* 4 byte header per strumento */
         genmidi_instrs[i].flags = p[0] | (p[1] << 8);
         genmidi_instrs[i].fine_tuning = p[2];
         genmidi_instrs[i].fixed_note = p[3];
-        
         pos += 4;
         
+        /* 2 voci, 11 byte ciascuna */
         for (v = 0; v < 2; v++)
         {
             const uint8_t *vp = &data[pos];
-            genmidi_instrs[i].voice[v].modulator_tremolo = vp[0];
-            genmidi_instrs[i].voice[v].carrier_tremolo   = vp[1];
-            genmidi_instrs[i].voice[v].modulator_level   = vp[2];
-            genmidi_instrs[i].voice[v].carrier_level     = vp[3];
-            genmidi_instrs[i].voice[v].modulator_attack  = vp[4];
-            genmidi_instrs[i].voice[v].carrier_attack    = vp[5];
-            genmidi_instrs[i].voice[v].modulator_sustain = vp[6];
-            genmidi_instrs[i].voice[v].carrier_sustain   = vp[7];
-            genmidi_instrs[i].voice[v].modulator_wave    = vp[8];
-            genmidi_instrs[i].voice[v].carrier_wave      = vp[9];
-            genmidi_instrs[i].voice[v].feedback          = vp[10];
+            
+            /* Modulator: 5 byte */
+            genmidi_instrs[i].voice[v].mod.mult   = vp[0];
+            genmidi_instrs[i].voice[v].mod.ksl_tl = vp[1];
+            genmidi_instrs[i].voice[v].mod.ad     = vp[2];
+            genmidi_instrs[i].voice[v].mod.sr     = vp[3];
+            genmidi_instrs[i].voice[v].mod.ws     = vp[4];
+            
+            /* Carrier: 5 byte */
+            genmidi_instrs[i].voice[v].car.mult   = vp[5];
+            genmidi_instrs[i].voice[v].car.ksl_tl = vp[6];
+            genmidi_instrs[i].voice[v].car.ad     = vp[7];
+            genmidi_instrs[i].voice[v].car.sr     = vp[8];
+            genmidi_instrs[i].voice[v].car.ws     = vp[9];
+            
+            /* Feedback: 1 byte */
+            genmidi_instrs[i].voice[v].feedback   = vp[10];
+            
             pos += 11;
         }
     }
@@ -699,26 +737,17 @@ static void load_genmidi(void)
 
 /* ==================== Apply GENMIDI voice to OPL channel ==================== */
 
-static void apply_genmidi_voice(int opl_ch, const genmidi_voice_t *gv)
+static void apply_genmidi_voice(int opl_ch, const genmidi_voice_data_t *voice)
 {
     opl_ch_t *c = &opl.channels[opl_ch];
     
-    opl_program_op(&c->op[0],
-                   gv->modulator_tremolo,
-                   gv->modulator_level,
-                   gv->modulator_attack,
-                   gv->modulator_sustain,
-                   gv->modulator_wave);
+    /* Programma modulator e carrier */
+    opl_program_op_from_data(&c->op[0], &voice->mod);
+    opl_program_op_from_data(&c->op[1], &voice->car);
     
-    opl_program_op(&c->op[1],
-                   gv->carrier_tremolo,
-                   gv->carrier_level,
-                   gv->carrier_attack,
-                   gv->carrier_sustain,
-                   gv->carrier_wave);
-    
-    c->feedback = (gv->feedback >> 1) & 0x07;
-    c->algorithm = gv->feedback & 0x01;
+    /* Feedback e algorithm dal byte feedback */
+    c->feedback = (voice->feedback >> 1) & 0x07;
+    c->algorithm = voice->feedback & 0x01;
 }
 
 /* ==================== Forward Declarations ==================== */
@@ -799,6 +828,7 @@ static void midi_note_on(int midi_ch, int note, int velocity)
     
     opl_ch_idx = slot;
     
+    /* Applica la prima voce dello strumento */
     apply_genmidi_voice(opl_ch_idx, &instr->voice[0]);
     
     if (instr->flags & GENMIDI_FLAG_FIXED)
@@ -806,23 +836,28 @@ static void midi_note_on(int midi_ch, int note, int velocity)
     else
         real_note = note;
     
-    if (real_note < 0) real_note = 0;
-    if (real_note > 127) real_note = 127;
+    if (real_note < 0)
+        real_note = 0;
+    if (real_note > 127)
+        real_note = 127;
     
     block = (real_note / 12);
-    if (block < 1) block = 1;
-    if (block > 7) block = 7;
+    if (block < 1)
+        block = 1;
+    if (block > 7)
+        block = 7;
     block -= 1;
     
     fnum = fnumber_table[real_note % 12];
     
     combined_vol = ((int)velocity * 
                     (int)mus.channels[midi_ch].volume *
-                    (int)mus.channels[midi_ch].expression *
-                    (int)mus.music_volume) / (127 * 127 * 127);
+                    (int)mus.channels[midi_ch].expression) / (127 * 127);
     
-    if (combined_vol > 127) combined_vol = 127;
-    vol_atten = ((127 - combined_vol) * 63) / 127;
+    if (combined_vol > 127)
+        combined_vol = 127;
+    
+    vol_atten = ((127 - combined_vol) * 48) / 127;
     vol_atten <<= 3;
     
     opl.channels[opl_ch_idx].vol_atten = vol_atten;
@@ -869,10 +904,6 @@ static void midi_control_change(int channel, int cc, int value)
         break;
     case 11:
         ch->expression = (uint8_t)value;
-        break;
-    case 1:
-        break;
-    case 64:
         break;
     case 121:
         ch->volume = 100;
@@ -936,9 +967,12 @@ static int parse_midi(const uint8_t *data, int len)
         return 0;
     
     pos = 8;
-    format = (data[pos] << 8) | data[pos + 1]; pos += 2;
-    num_tracks = (data[pos] << 8) | data[pos + 1]; pos += 2;
-    mus.ticks_per_beat = (data[pos] << 8) | data[pos + 1]; pos += 2;
+    format = (data[pos] << 8) | data[pos + 1];
+    pos += 2;
+    num_tracks = (data[pos] << 8) | data[pos + 1];
+    pos += 2;
+    mus.ticks_per_beat = (data[pos] << 8) | data[pos + 1];
+    pos += 2;
     
     if (mus.ticks_per_beat == 0)
         mus.ticks_per_beat = 140;
@@ -951,7 +985,8 @@ static int parse_midi(const uint8_t *data, int len)
         uint32_t abs_tick = 0;
         uint8_t running_status = 0;
         
-        if (pos + 8 > len) break;
+        if (pos + 8 > len)
+            break;
         if (data[pos] != 'M' || data[pos+1] != 'T' ||
             data[pos+2] != 'r' || data[pos+3] != 'k')
             break;
@@ -962,7 +997,8 @@ static int parse_midi(const uint8_t *data, int len)
         pos += 4;
         
         track_end = pos + track_len;
-        if (track_end > len) track_end = len;
+        if (track_end > len)
+            track_end = len;
         
         while (pos < track_end && mus.num_events < MAX_MIDI_EVENTS)
         {
@@ -973,7 +1009,8 @@ static int parse_midi(const uint8_t *data, int len)
             delta = read_vlq(data, &pos, track_end);
             abs_tick += delta;
             
-            if (pos >= track_end) break;
+            if (pos >= track_end)
+                break;
             
             status = data[pos];
             if (status & 0x80)
@@ -1063,7 +1100,8 @@ static int parse_midi(const uint8_t *data, int len)
                     uint8_t meta_type;
                     uint32_t meta_len;
                     
-                    if (pos >= track_end) goto done_track;
+                    if (pos >= track_end)
+                        goto done_track;
                     meta_type = data[pos++];
                     meta_len = read_vlq(data, &pos, track_end);
                     
@@ -1072,7 +1110,8 @@ static int parse_midi(const uint8_t *data, int len)
                         mus.us_per_beat = ((uint32_t)data[pos] << 16) |
                                           ((uint32_t)data[pos+1] << 8) |
                                           (uint32_t)data[pos+2];
-                        if (mus.us_per_beat == 0) mus.us_per_beat = 500000;
+                        if (mus.us_per_beat == 0)
+                            mus.us_per_beat = 500000;
                     }
                     else if (meta_type == 0x2F)
                     {
@@ -1243,7 +1282,6 @@ static int snd_mix_thread(SceSize args, void *argp)
                 snd_channels[c].pos += snd_channels[c].step;
                 
                 sample = (sample * snd_channels[c].vol * sfx_volume) / (127 * 127);
-                
                 sample <<= 1;
                 
                 lv = 255 - snd_channels[c].sep;
