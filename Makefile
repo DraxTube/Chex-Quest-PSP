@@ -30,12 +30,13 @@ LIBS = -lpspgu -lpspgum -lpspdisplay -lpspge -lpspctrl \
        -lpspnet -lpspnet_apctl
 LDFLAGS =
 
+EXTRA_TARGETS = EBOOT.PBP
+PSP_EBOOT_TITLE = Chex Quest PSP
+PSP_EBOOT_SFO = PARAM.SFO
+
 BUILD_PRX = 1
 PSP_FW_VERSION = 660
-
-PSP_EBOOT_TITLE = Chex Quest PSP
-# PSP_EBOOT_ICON = ICON0.PNG
-# PSP_EBOOT_PIC1 = PIC1.PNG
+PSP_LARGE_MEMORY = 1
 
 PSPSDK = $(shell psp-config --pspsdk-path)
 include $(PSPSDK)/lib/build.mak
