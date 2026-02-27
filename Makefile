@@ -1,6 +1,5 @@
 TARGET = chexquest
 
-# Tutti i .c nella directory doomgeneric tranne gli altri doomgeneric_*.c platform
 COMMON_SRC = \
 	am_map.c \
 	d_event.c \
@@ -90,10 +89,11 @@ COMMON_SRC = \
 OBJS = $(COMMON_SRC:.c=.o) doomgeneric_psp.o
 
 INCDIR =
-CFLAGS = -O2 -G0 -Wall -DPSP -DNORMALUNIX -DFEATURE_SOUND=0
+CFLAGS = -std=c99 -O2 -G0 -Wall -DPSP -DNORMALUNIX -DFEATURE_SOUND=0
 CFLAGS += -DDOOMGENERIC_RESX=480 -DDOOMGENERIC_RESY=272
 CFLAGS += -Wno-unused-variable -Wno-unused-parameter -Wno-pointer-sign
 CFLAGS += -Wno-missing-braces -Wno-implicit-function-declaration
+CFLAGS += -Wno-char-subscripts -Wno-sign-compare
 CXXFLAGS = $(CFLAGS)
 ASFLAGS = $(CFLAGS)
 
