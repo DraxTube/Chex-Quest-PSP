@@ -15,7 +15,7 @@ jobs:
 
     steps:
       - name: Install system deps
-        run: apk add --no-cache make git bash sed coreutils
+        run: apk add --no-cache make git bash sed coreutils python3
 
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,15 +30,12 @@ jobs:
           cd doomgeneric/doomgeneric
 
           # ---- Fix boolean enum in doomtype.h ----
-          # Use a Python one-liner for reliable multiline replacement
           python3 -c "
           import re, sys
 
           with open('doomtype.h', 'r') as f:
               content = f.read()
 
-          # Match the entire 'typedef enum { false, true } boolean;' block
-          # (handles multiline and various spacings)
           pattern = r'typedef\s+enum\s*\{[^}]*\}\s*boolean\s*;'
           replacement = '''typedef int boolean;
           #ifndef true
@@ -62,11 +59,8 @@ jobs:
           grep -n "boolean\|true\|false" doomtype.h || true
 
           # ---- Fix i_system.c ----
-          # Add pspkernel.h include only if not already present
           grep -q '#include <pspkernel.h>' i_system.c || sed -i '1i #include <pspkernel.h>' i_system.c
-          # Remove signal.h include
           sed -i 's/#include <signal.h>//' i_system.c
-          # Replace signal raises with PSP exit
           sed -i 's/raise(SIGTERM)/sceKernelExitGame()/g' i_system.c
           sed -i 's/raise(sig)/sceKernelExitGame()/g' i_system.c
 
@@ -113,7 +107,6 @@ jobs:
           set -euo pipefail
           mkdir -p release/ChexQuest
           cp doomgeneric/doomgeneric/EBOOT.PBP release/ChexQuest/
-          # Copy PARAM.SFO if it exists separately (some setups embed it in EBOOT.PBP)
           if [ -f doomgeneric/doomgeneric/PARAM.SFO ]; then
             cp doomgeneric/doomgeneric/PARAM.SFO release/ChexQuest/
           fi
