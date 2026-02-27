@@ -1146,10 +1146,10 @@ void *I_RegisterSong(void *data, int len)
     MEMFILE *outstream = NULL;
     void *outbuf = NULL;
     size_t outlen = 0;
-    
+
     if (!data || len <= 0)
         return NULL;
-    
+
     /* Libera dati precedenti */
     if (mus.midi_data)
     {
@@ -1157,12 +1157,12 @@ void *I_RegisterSong(void *data, int len)
         mus.midi_data = NULL;
         mus.midi_data_len = 0;
     }
-    
+
     /* Controlla se è già MIDI (header "MThd") */
-    if (len >= 4 && 
-        ((uint8_t *)data)[0] == 'M' && 
+    if (len >= 4 &&
+        ((uint8_t *)data)[0] == 'M' &&
         ((uint8_t *)data)[1] == 'T' &&
-        ((uint8_t *)data)[2] == 'h' && 
+        ((uint8_t *)data)[2] == 'h' &&
         ((uint8_t *)data)[3] == 'd')
     {
         /* È già MIDI */
@@ -1178,41 +1178,46 @@ void *I_RegisterSong(void *data, int len)
         instream = mem_fopen_read(data, len);
         if (!instream)
             return NULL;
-        
+
         outstream = mem_fopen_write();
         if (!outstream)
         {
             mem_fclose(instream);
             return NULL;
         }
-        
+
         if (mus2mid(instream, outstream) != 0)
         {
-            /* Conversione fallita */
             mem_fclose(instream);
             mem_fclose(outstream);
             return NULL;
         }
-        
-        outbuf = mem_fread_all(outstream, &outlen);
-        
-        mem_fclose(instream);
-        mem_fclose(outstream);
-        
+
+        /* Usa mem_get_buf invece di mem_fread_all */
+        mem_get_buf(outstream, &outbuf, &outlen);
+
         if (!outbuf || outlen == 0)
+        {
+            mem_fclose(instream);
+            mem_fclose(outstream);
             return NULL;
-        
+        }
+
         mus.midi_data = malloc(outlen);
         if (!mus.midi_data)
         {
-            free(outbuf);
+            mem_fclose(instream);
+            mem_fclose(outstream);
             return NULL;
         }
         memcpy(mus.midi_data, outbuf, outlen);
         mus.midi_data_len = (int)outlen;
-        free(outbuf);
+
+        /* Chiudi DOPO aver copiato (mem_get_buf dà un puntatore interno) */
+        mem_fclose(instream);
+        mem_fclose(outstream);
     }
-    
+
     /* Parse il MIDI */
     if (parse_midi((const uint8_t *)mus.midi_data, mus.midi_data_len) <= 0)
     {
@@ -1221,10 +1226,10 @@ void *I_RegisterSong(void *data, int len)
         mus.midi_data_len = 0;
         return NULL;
     }
-    
+
     /* Ordina eventi per tick */
     sort_events();
-    
+
     /* Ritorna handle non-NULL */
     return (void *)1;
 }
