@@ -1,0 +1,51 @@
+name: Build Chex Quest PSP
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: pspdev/pspdev:latest
+
+    steps:
+    - name: Install system deps
+      run: |
+        apk add --no-cache make git bash
+
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Clone doomgeneric
+      run: |
+        git clone https://github.com/ozkl/doomgeneric.git
+
+    - name: Copy PSP platform file
+      run: |
+        cp doomgeneric_psp.c doomgeneric/doomgeneric/doomgeneric_psp.c
+
+    - name: Build
+      run: |
+        cd doomgeneric/doomgeneric
+        cp ../../Makefile .
+        export PSPDEV=/usr/local/pspdev
+        export PATH=$PSPDEV/bin:$PATH
+        make
+
+    - name: Package
+      run: |
+        mkdir -p release/ChexQuest
+        cp doomgeneric/doomgeneric/EBOOT.PBP release/ChexQuest/
+        echo "Place chex.wad in this folder and rename it to doom1.wad" > release/ChexQuest/README.txt
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ChexQuest-PSP-EBOOT
+        path: release/
+        retention-days: 90
