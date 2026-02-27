@@ -1,7 +1,6 @@
 /*
  * doomgeneric_psp.c - PSP platform for doomgeneric (Chex Quest)
- * Con debug log su ms0:/PSP/GAME/ChexQuest/debug.txt
- * FIX: fullscreen scaling, input mapping, analog stick, weapon cycling
+ * FIX: weapon cycling veloce con rilascio time-based (50ms)
  */
 
 #include "doomgeneric.h"
@@ -278,11 +277,13 @@ static int keyq_tail = 0;
 static SceCtrlData pad_prev;
 static int pad_initialized = 0;
 
-/* ===== Weapon cycling con rilascio ritardato ===== */
+/* ===== Weapon cycling - rilascio basato sul tempo ===== */
 static int current_weapon = 2;
-static unsigned char weapon_pending_release = 0;
-static int weapon_release_timer = 0;
-#define WEAPON_HOLD_FRAMES 6
+static unsigned char weapon_pending_key = 0;
+static uint32_t weapon_press_time = 0;
+#define WEAPON_HOLD_MS  50   /* 50ms = copre sempre almeno 1 game tic (28ms) */
+#define WEAPON_MIN      1
+#define WEAPON_MAX      7
 
 static void keyq_push(int pressed, unsigned char doomkey)
 {
@@ -305,6 +306,26 @@ static void check_btn(uint32_t old_b, uint32_t new_b,
 
 static int analog_left = 0, analog_right = 0, analog_up = 0, analog_down = 0;
 
+static void weapon_switch(int direction)
+{
+    /* Se c'è un tasto arma ancora premuto, rilascialo subito */
+    if (weapon_pending_key != 0)
+    {
+        keyq_push(0, weapon_pending_key);
+        weapon_pending_key = 0;
+    }
+
+    current_weapon += direction;
+    if (current_weapon > WEAPON_MAX) current_weapon = WEAPON_MIN;
+    if (current_weapon < WEAPON_MIN) current_weapon = WEAPON_MAX;
+
+    weapon_pending_key = '0' + current_weapon;
+    weapon_press_time = DG_GetTicksMs();
+    keyq_push(1, weapon_pending_key);
+
+    dbg_logn("weapon ->", current_weapon);
+}
+
 static void poll_input(void)
 {
     SceCtrlData pad;
@@ -322,22 +343,21 @@ static void poll_input(void)
         pad_initialized = 1;
     }
 
-    /* ===== Rilascio ritardato tasto arma ===== */
-    if (weapon_pending_release != 0)
+    /* ===== Rilascio tasto arma basato sul tempo ===== */
+    if (weapon_pending_key != 0)
     {
-        weapon_release_timer--;
-        if (weapon_release_timer <= 0)
+        uint32_t now = DG_GetTicksMs();
+        if ((now - weapon_press_time) >= WEAPON_HOLD_MS)
         {
-            keyq_push(0, weapon_pending_release);
-            weapon_pending_release = 0;
-            weapon_release_timer = 0;
+            keyq_push(0, weapon_pending_key);
+            weapon_pending_key = 0;
         }
     }
 
     uint32_t ob = pad_prev.Buttons;
     uint32_t nb = pad.Buttons;
 
-    /* ===== D-PAD: Armi + Quick Save/Load ===== */
+    /* ===== D-PAD ===== */
     {
         int was, now;
 
@@ -345,44 +365,13 @@ static void poll_input(void)
         was = (ob & PSP_CTRL_RIGHT) != 0;
         now = (nb & PSP_CTRL_RIGHT) != 0;
         if (now && !was)
-        {
-            /* Se c'è un tasto arma ancora premuto, rilascialo prima */
-            if (weapon_pending_release != 0)
-            {
-                keyq_push(0, weapon_pending_release);
-                weapon_pending_release = 0;
-            }
-
-            current_weapon++;
-            if (current_weapon > 7) current_weapon = 1;
-
-            weapon_pending_release = '0' + current_weapon;
-            weapon_release_timer = WEAPON_HOLD_FRAMES;
-            keyq_push(1, weapon_pending_release);
-
-            dbg_logn("weapon_next ->", current_weapon);
-        }
+            weapon_switch(+1);
 
         /* Sinistra: arma precedente */
         was = (ob & PSP_CTRL_LEFT) != 0;
         now = (nb & PSP_CTRL_LEFT) != 0;
         if (now && !was)
-        {
-            if (weapon_pending_release != 0)
-            {
-                keyq_push(0, weapon_pending_release);
-                weapon_pending_release = 0;
-            }
-
-            current_weapon--;
-            if (current_weapon < 1) current_weapon = 7;
-
-            weapon_pending_release = '0' + current_weapon;
-            weapon_release_timer = WEAPON_HOLD_FRAMES;
-            keyq_push(1, weapon_pending_release);
-
-            dbg_logn("weapon_prev ->", current_weapon);
-        }
+            weapon_switch(-1);
 
         /* Su: Quick Save (F6) */
         was = (ob & PSP_CTRL_UP) != 0;
