@@ -1,24 +1,32 @@
 // dummy.c - Stub implementations for PSP port
+// FIX: I_GetEvent now bridges DG_GetKey -> Doom engine
+
+#include "doomgeneric.h"
 
 typedef int boolean;
 typedef unsigned char byte;
 #define false 0
 #define true  1
 
+/* Event types - deve corrispondere a d_event.h */
+typedef enum { ev_keydown, ev_keyup, ev_mouse, ev_joystick } evtype_t;
+typedef struct { evtype_t type; int data1; int data2; int data3; } event_t;
+extern void D_PostEvent(event_t *ev);
+
 struct sfxinfo_s;
 typedef struct sfxinfo_s sfxinfo_t;
 struct wbstartstruct_s;
 typedef struct wbstartstruct_s wbstartstruct_t;
 
-// Global variables
+/* Global variables */
 int snd_musicdevice = 0;
 int vanilla_keyboard_mapping = 1;
 
-// Network variables
+/* Network variables */
 boolean drone = 0;
 boolean net_client_connected = 0;
 
-// Sound
+/* Sound */
 boolean I_SoundIsPlaying(int handle) { return 0; }
 int I_GetSfxLumpNum(sfxinfo_t *sfx) { return 0; }
 int I_StartSound(sfxinfo_t *sfxinfo, int channel, int vol, int sep, int pitch) { return 0; }
@@ -30,7 +38,7 @@ void I_ShutdownSound(void) {}
 void I_PrecacheSounds(sfxinfo_t *sounds, int num_sounds) {}
 void I_BindSoundVariables(void) {}
 
-// Music
+/* Music */
 void I_InitMusic(void) {}
 void I_ShutdownMusic(void) {}
 void I_SetMusicVolume(int volume) {}
@@ -42,22 +50,36 @@ void I_PlaySong(void *handle, boolean looping) {}
 void I_StopSong(void) {}
 boolean I_MusicIsPlaying(void) { return 0; }
 
-// Joystick
+/* Joystick */
 void I_InitJoystick(void) {}
 void I_BindJoystickVariables(void) {}
 
-// Input - IMPORTANT: these must exist but stay empty
-// The actual input is handled by poll_input() in doomgeneric_psp.c
-// which feeds the key queue read by DG_GetKey()
+/* Input init - può restare vuota */
 void I_InitInput(void) {}
-void I_GetEvent(void) {}
 
-// Video - i_video stubs if not already provided
-// These may already be defined in i_video.c, if so remove from here
-// void I_InitGraphics(void) {}
-// void I_ShutdownGraphics(void) {}
+/*
+ * ===== FIX CRITICO =====
+ * I_GetEvent: legge i tasti dalla coda PSP (via DG_GetKey)
+ * e li passa al motore Doom (via D_PostEvent).
+ * PRIMA era vuota → Doom non riceveva MAI nessun tasto!
+ */
+void I_GetEvent(void)
+{
+    event_t event;
+    int pressed;
+    unsigned char key;
 
-// Misc
+    while (DG_GetKey(&pressed, &key))
+    {
+        event.type = pressed ? ev_keydown : ev_keyup;
+        event.data1 = key;
+        event.data2 = -1;
+        event.data3 = -1;
+        D_PostEvent(&event);
+    }
+}
+
+/* Misc */
 void I_Endoom(byte *endoom_data) {}
 void StatCopy(wbstartstruct_t *stats) {}
 void StatDump(void) {}
