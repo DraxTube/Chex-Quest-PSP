@@ -1,7 +1,7 @@
 /*
  * doomgeneric_psp.c - PSP platform for doomgeneric (Chex Quest)
  * Con debug log su ms0:/PSP/GAME/ChexQuest/debug.txt
- * FIX: fullscreen scaling, input mapping, analog stick
+ * FIX: fullscreen scaling, input mapping, analog stick, weapon cycling
  */
 
 #include "doomgeneric.h"
@@ -168,11 +168,9 @@ static void draw_framebuffer(void)
     src_w = DOOMGENERIC_RESX;
     src_h = DOOMGENERIC_RESY;
 
-    /* Clamp sorgente alla texture 512x512 */
     if (src_w > 512) src_w = 512;
     if (src_h > 512) src_h = 512;
 
-    /* Copia pixel da DG_ScreenBuffer a tex_buf con conversione colore RGB->BGR per GU */
     for (y = 0; y < src_h; y++)
     {
         const uint32_t *src = (const uint32_t *)&DG_ScreenBuffer[y * DOOMGENERIC_RESX];
@@ -194,10 +192,6 @@ static void draw_framebuffer(void)
 
     sceGuTexImage(0, 512, 512, 512, tex_buf);
 
-    /*
-     * FIX FULLSCREEN: Disegna la texture scalata a tutto schermo 480x272
-     * usando strip da 64 pixel per rispettare il limite hardware PSP
-     */
     {
         int strip_w = 64;
         int sx;
@@ -207,7 +201,6 @@ static void draw_framebuffer(void)
             if (sx + sw > src_w)
                 sw = src_w - sx;
 
-            /* Mappa coordinate texture -> coordinate schermo proporzionalmente */
             short dx0 = (short)((sx * SCR_W) / src_w);
             short dx1 = (short)(((sx + sw) * SCR_W) / src_w);
 
@@ -248,7 +241,6 @@ static void draw_framebuffer(void)
 
 #define KEYQ_SIZE 256
 
-/* Fallback per chiavi doomgeneric */
 #ifndef KEY_FIRE
 #define KEY_FIRE        0xa2
 #endif
@@ -285,7 +277,12 @@ static int keyq_head = 0;
 static int keyq_tail = 0;
 static SceCtrlData pad_prev;
 static int pad_initialized = 0;
-static int current_weapon = 1;
+
+/* ===== Weapon cycling con rilascio ritardato ===== */
+static int current_weapon = 2;
+static unsigned char weapon_pending_release = 0;
+static int weapon_release_timer = 0;
+#define WEAPON_HOLD_FRAMES 6
 
 static void keyq_push(int pressed, unsigned char doomkey)
 {
@@ -325,6 +322,18 @@ static void poll_input(void)
         pad_initialized = 1;
     }
 
+    /* ===== Rilascio ritardato tasto arma ===== */
+    if (weapon_pending_release != 0)
+    {
+        weapon_release_timer--;
+        if (weapon_release_timer <= 0)
+        {
+            keyq_push(0, weapon_pending_release);
+            weapon_pending_release = 0;
+            weapon_release_timer = 0;
+        }
+    }
+
     uint32_t ob = pad_prev.Buttons;
     uint32_t nb = pad.Buttons;
 
@@ -337,10 +346,21 @@ static void poll_input(void)
         now = (nb & PSP_CTRL_RIGHT) != 0;
         if (now && !was)
         {
+            /* Se c'è un tasto arma ancora premuto, rilascialo prima */
+            if (weapon_pending_release != 0)
+            {
+                keyq_push(0, weapon_pending_release);
+                weapon_pending_release = 0;
+            }
+
             current_weapon++;
             if (current_weapon > 7) current_weapon = 1;
-            keyq_push(1, '0' + current_weapon);
-            keyq_push(0, '0' + current_weapon);
+
+            weapon_pending_release = '0' + current_weapon;
+            weapon_release_timer = WEAPON_HOLD_FRAMES;
+            keyq_push(1, weapon_pending_release);
+
+            dbg_logn("weapon_next ->", current_weapon);
         }
 
         /* Sinistra: arma precedente */
@@ -348,10 +368,20 @@ static void poll_input(void)
         now = (nb & PSP_CTRL_LEFT) != 0;
         if (now && !was)
         {
+            if (weapon_pending_release != 0)
+            {
+                keyq_push(0, weapon_pending_release);
+                weapon_pending_release = 0;
+            }
+
             current_weapon--;
             if (current_weapon < 1) current_weapon = 7;
-            keyq_push(1, '0' + current_weapon);
-            keyq_push(0, '0' + current_weapon);
+
+            weapon_pending_release = '0' + current_weapon;
+            weapon_release_timer = WEAPON_HOLD_FRAMES;
+            keyq_push(1, weapon_pending_release);
+
+            dbg_logn("weapon_prev ->", current_weapon);
         }
 
         /* Su: Quick Save (F6) */
@@ -373,13 +403,13 @@ static void poll_input(void)
         }
     }
 
-    /* ===== BOTTONI: usa KEY_FIRE/KEY_USE del motore! ===== */
-    check_btn(ob, nb, PSP_CTRL_CROSS,    KEY_FIRE);      /* Spara */
-    check_btn(ob, nb, PSP_CTRL_CROSS,    KEY_ENTER);      /* Conferma menu */
-    check_btn(ob, nb, PSP_CTRL_CROSS,    'y');             /* Si ai prompt */
-    check_btn(ob, nb, PSP_CTRL_CIRCLE,   KEY_USE);         /* Usa / Apri */
-    check_btn(ob, nb, PSP_CTRL_SQUARE,   KEY_TAB);         /* Automap */
-    check_btn(ob, nb, PSP_CTRL_TRIANGLE, KEY_RSHIFT);      /* Corri */
+    /* ===== BOTTONI ===== */
+    check_btn(ob, nb, PSP_CTRL_CROSS,    KEY_FIRE);
+    check_btn(ob, nb, PSP_CTRL_CROSS,    KEY_ENTER);
+    check_btn(ob, nb, PSP_CTRL_CROSS,    'y');
+    check_btn(ob, nb, PSP_CTRL_CIRCLE,   KEY_USE);
+    check_btn(ob, nb, PSP_CTRL_SQUARE,   KEY_TAB);
+    check_btn(ob, nb, PSP_CTRL_TRIANGLE, KEY_RSHIFT);
 
     /* ===== TRIGGER: Strafe ===== */
     check_btn(ob, nb, PSP_CTRL_LTRIGGER, KEY_STRAFE_L);
@@ -407,6 +437,7 @@ static void poll_input(void)
 
     pad_prev = pad;
 }
+
 /* ==================== DoomGeneric Interface ==================== */
 
 void DG_Init(void)
@@ -483,7 +514,6 @@ int main(int argc, char **argv)
     const char *found_path = NULL;
     int i;
 
-    /* Init debug log FIRST */
     dbg_init();
     dbg_log("=== Chex Quest PSP starting ===");
     dbg_logn("argc", argc);
