@@ -65,8 +65,6 @@ jobs:
           sed -i 's/getenv("DOOMWADDIR")/NULL/g' d_iwad.c
           sed -i 's/getenv("DOOMWADPATH")/NULL/g' d_iwad.c
 
-          echo "=== Patching done ==="
-
       - name: Copy PSP files
         shell: bash
         run: |
@@ -74,7 +72,6 @@ jobs:
           cp doomgeneric_psp.c doomgeneric/doomgeneric/doomgeneric_psp.c
           cp Makefile doomgeneric/doomgeneric/Makefile
           cp dummy.c doomgeneric/doomgeneric/dummy.c
-          echo "PSP files copied"
 
       - name: Build
         shell: bash
@@ -86,13 +83,14 @@ jobs:
           make 2>&1
 
           echo "=== Build outputs ==="
-          ls -la EBOOT.PBP PARAM.SFO *.prx *.elf 2>/dev/null
+          ls -la EBOOT.PBP PARAM.SFO 2>/dev/null || { echo "EBOOT.PBP missing!"; exit 1; }
+          ls -la *.elf *.prx 2>/dev/null || true
 
-          echo "=== PRX imports (for debug) ==="
-          psp-nm chexquest.elf | grep "U " | head -40 || true
+          echo "=== Link libraries used ==="
+          psp-readelf -d chexquest.elf 2>/dev/null | head -20 || true
 
-          echo "=== PRX info ==="
-          psp-objdump -h chexquest.elf | head -30 || true
+          echo "=== Undefined symbols ==="
+          psp-nm chexquest.elf 2>/dev/null | grep " U " | sort -u | head -50 || true
 
       - name: Upload EBOOT.PBP
         uses: actions/upload-artifact@v4
