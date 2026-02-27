@@ -29,13 +29,10 @@ jobs:
           set -euo pipefail
           cd doomgeneric/doomgeneric
 
-          # ---- Fix boolean enum in doomtype.h ----
           python3 -c "
           import re, sys
-
           with open('doomtype.h', 'r') as f:
               content = f.read()
-
           pattern = r'typedef\s+enum\s*\{[^}]*\}\s*boolean\s*;'
           replacement = '''typedef int boolean;
           #ifndef true
@@ -44,37 +41,26 @@ jobs:
           #ifndef false
           #define false 0
           #endif'''
-
           new_content, count = re.subn(pattern, replacement, content, flags=re.DOTALL)
           if count == 0:
-              print('WARNING: boolean enum pattern not found in doomtype.h', file=sys.stderr)
+              print('WARNING: boolean enum pattern not found', file=sys.stderr)
           else:
-              print(f'Replaced {count} occurrence(s) of boolean enum')
-
+              print(f'Replaced {count} occurrence(s)')
           with open('doomtype.h', 'w') as f:
               f.write(new_content)
           "
 
-          echo "=== doomtype.h patched ==="
-          grep -n "boolean\|true\|false" doomtype.h || true
-
-          # ---- Fix i_system.c ----
           grep -q '#include <pspkernel.h>' i_system.c || sed -i '1i #include <pspkernel.h>' i_system.c
           sed -i 's/#include <signal.h>//' i_system.c
           sed -i 's/raise(SIGTERM)/sceKernelExitGame()/g' i_system.c
           sed -i 's/raise(sig)/sceKernelExitGame()/g' i_system.c
 
-          # ---- Fix missing PATH_MAX ----
           for f in d_iwad.c m_misc.c m_config.c w_file_stdc.c; do
             if [ -f "$f" ]; then
               grep -q '#include <limits.h>' "$f" || sed -i '1i #include <limits.h>' "$f"
-              echo "  Added limits.h to $f (if missing)"
-            else
-              echo "  WARNING: $f not found, skipping"
             fi
           done
 
-          # ---- Disable getenv calls that fail on PSP ----
           sed -i 's/getenv("HOME")/NULL/g' d_iwad.c
           sed -i 's/getenv("DOOMWADDIR")/NULL/g' d_iwad.c
           sed -i 's/getenv("DOOMWADPATH")/NULL/g' d_iwad.c
@@ -88,7 +74,7 @@ jobs:
           cp doomgeneric_psp.c doomgeneric/doomgeneric/doomgeneric_psp.c
           cp Makefile doomgeneric/doomgeneric/Makefile
           cp dummy.c doomgeneric/doomgeneric/dummy.c
-          echo "PSP source, Makefile and dummy.c copied"
+          echo "PSP files copied"
 
       - name: Build
         shell: bash
@@ -99,13 +85,14 @@ jobs:
           export PATH="$PSPDEV/bin:$PATH"
           make 2>&1
 
-          echo "=== Checking outputs ==="
-          ls -la EBOOT.PBP PARAM.SFO 2>/dev/null || { echo "ERROR: EBOOT.PBP or PARAM.SFO not found!"; exit 1; }
-          ls -la *.elf *.prx 2>/dev/null || echo "Note: .elf/.prx intermediates may have been cleaned"
+          echo "=== Build outputs ==="
+          ls -la EBOOT.PBP PARAM.SFO *.prx *.elf 2>/dev/null
 
-          # Verify EBOOT structure
-          echo "=== EBOOT.PBP file size ==="
-          wc -c EBOOT.PBP
+          echo "=== PRX imports (for debug) ==="
+          psp-nm chexquest.elf | grep "U " | head -40 || true
+
+          echo "=== PRX info ==="
+          psp-objdump -h chexquest.elf | head -30 || true
 
       - name: Upload EBOOT.PBP
         uses: actions/upload-artifact@v4
