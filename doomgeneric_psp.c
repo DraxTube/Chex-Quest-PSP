@@ -248,6 +248,14 @@ static void draw_framebuffer(void)
 
 #define KEYQ_SIZE 256
 
+/* Fallback se doomkeys.h non definisce F6/F9 */
+#ifndef KEY_F6
+#define KEY_F6 (0x80+0x40)
+#endif
+#ifndef KEY_F9
+#define KEY_F9 (0x80+0x43)
+#endif
+
 static struct {
     unsigned char pressed;
     unsigned char key;
@@ -257,6 +265,7 @@ static int keyq_head = 0;
 static int keyq_tail = 0;
 static SceCtrlData pad_prev;
 static int pad_initialized = 0;
+static int current_weapon = 1;   /* Per ciclare armi 1-7 */
 
 static void keyq_push(int pressed, unsigned char doomkey)
 {
@@ -299,28 +308,68 @@ static void poll_input(void)
     uint32_t ob = pad_prev.Buttons;
     uint32_t nb = pad.Buttons;
 
-    /* === D-pad: movimento === */
-    check_btn(ob, nb, PSP_CTRL_UP,       KEY_UPARROW);
-    check_btn(ob, nb, PSP_CTRL_DOWN,     KEY_DOWNARROW);
-    check_btn(ob, nb, PSP_CTRL_LEFT,     KEY_LEFTARROW);
-    check_btn(ob, nb, PSP_CTRL_RIGHT,    KEY_RIGHTARROW);
+    /* ===== D-PAD: Armi + Quick Save/Load ===== */
+    {
+        int was, now;
 
-    /* === Bottoni azione (USA I CODICI TASTO STANDARD DI DOOM!) === */
-    check_btn(ob, nb, PSP_CTRL_CROSS,    KEY_RCTRL);    /* Fuoco (fire) */
-    check_btn(ob, nb, PSP_CTRL_CROSS,    KEY_ENTER);    /* + Enter per menu */
-    check_btn(ob, nb, PSP_CTRL_CIRCLE,   ' ');          /* Usa/Apri (use) */
-    check_btn(ob, nb, PSP_CTRL_SQUARE,   KEY_RALT);     /* Strafe modifier */
-    check_btn(ob, nb, PSP_CTRL_TRIANGLE, KEY_RSHIFT);   /* Corri (run) */
+        /* D-pad Destra: arma successiva */
+        was = (ob & PSP_CTRL_RIGHT) != 0;
+        now = (nb & PSP_CTRL_RIGHT) != 0;
+        if (now && !was)
+        {
+            current_weapon++;
+            if (current_weapon > 7) current_weapon = 1;
+            keyq_push(1, '0' + current_weapon);
+            keyq_push(0, '0' + current_weapon);
+        }
 
-    /* === Trigger: cambio arma === */
-    check_btn(ob, nb, PSP_CTRL_LTRIGGER, ',');           /* Arma precedente */
-    check_btn(ob, nb, PSP_CTRL_RTRIGGER, '.');           /* Arma successiva */
+        /* D-pad Sinistra: arma precedente */
+        was = (ob & PSP_CTRL_LEFT) != 0;
+        now = (nb & PSP_CTRL_LEFT) != 0;
+        if (now && !was)
+        {
+            current_weapon--;
+            if (current_weapon < 1) current_weapon = 7;
+            keyq_push(1, '0' + current_weapon);
+            keyq_push(0, '0' + current_weapon);
+        }
 
-    /* === Start/Select === */
-    check_btn(ob, nb, PSP_CTRL_START,    KEY_ESCAPE);   /* Menu / Pausa */
-    check_btn(ob, nb, PSP_CTRL_SELECT,   KEY_TAB);      /* Automap */
+        /* D-pad Su: Quick Save (F6) */
+        was = (ob & PSP_CTRL_UP) != 0;
+        now = (nb & PSP_CTRL_UP) != 0;
+        if (now && !was)
+        {
+            keyq_push(1, KEY_F6);
+            keyq_push(0, KEY_F6);
+        }
 
-    /* === Analog stick -> frecce direzionali === */
+        /* D-pad Giù: Quick Load (F9) */
+        was = (ob & PSP_CTRL_DOWN) != 0;
+        now = (nb & PSP_CTRL_DOWN) != 0;
+        if (now && !was)
+        {
+            keyq_push(1, KEY_F9);
+            keyq_push(0, KEY_F9);
+        }
+    }
+
+    /* ===== BOTTONI AZIONE ===== */
+    check_btn(ob, nb, PSP_CTRL_CROSS,    KEY_RCTRL);    /* Fuoco */
+    check_btn(ob, nb, PSP_CTRL_CROSS,    KEY_ENTER);    /* Conferma menu */
+    check_btn(ob, nb, PSP_CTRL_CROSS,    'y');           /* Sì per prompt */
+    check_btn(ob, nb, PSP_CTRL_CIRCLE,   ' ');           /* Usa / Apri */
+    check_btn(ob, nb, PSP_CTRL_TRIANGLE, KEY_RSHIFT);    /* Corri */
+    check_btn(ob, nb, PSP_CTRL_SQUARE,   KEY_TAB);       /* Automap */
+
+    /* ===== TRIGGER: Strafe ===== */
+    check_btn(ob, nb, PSP_CTRL_LTRIGGER, ',');            /* Strafe sx */
+    check_btn(ob, nb, PSP_CTRL_RTRIGGER, '.');            /* Strafe dx */
+
+    /* ===== START / SELECT ===== */
+    check_btn(ob, nb, PSP_CTRL_START,    KEY_ESCAPE);    /* Menu */
+    check_btn(ob, nb, PSP_CTRL_SELECT,   KEY_ENTER);     /* Conferma alt */
+
+    /* ===== ANALOG STICK: Movimento ===== */
     ax = (int)pad.Lx - 128;
     ay = (int)pad.Ly - 128;
 
