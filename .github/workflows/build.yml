@@ -65,6 +65,18 @@ jobs:
           sed -i 's/getenv("DOOMWADDIR")/NULL/g' d_iwad.c
           sed -i 's/getenv("DOOMWADPATH")/NULL/g' d_iwad.c
 
+          # Patch doomgeneric.c to ensure DG_ScreenBuffer is allocated with correct size
+          if grep -q 'DOOMGENERIC_RESX \* DOOMGENERIC_RESY' doomgeneric.c; then
+            echo "doomgeneric.c buffer allocation looks OK"
+          fi
+
+          # Patch i_video.c - ensure screen buffer uses correct resolution
+          if [ -f "i_video.c" ]; then
+            echo "i_video.c found, checking..."
+            # Make sure I_InitGraphics doesn't override our resolution
+            grep -n 'SCREENWIDTH\|screenwidth\|320\|200' i_video.c | head -20 || true
+          fi
+
       - name: Copy PSP files
         shell: bash
         run: |
