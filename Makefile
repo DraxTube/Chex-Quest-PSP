@@ -14,7 +14,7 @@ OBJS = am_map.o d_event.o d_items.o d_iwad.o d_loop.o d_main.o d_mode.o \
        w_main.o w_wad.o wi_stuff.o z_zone.o doomgeneric_psp.o psp_sound.o
 
 INCDIR =
-CFLAGS = -std=gnu99 -O2 -G0 -Wall -DPSP -DNORMALUNIX -DFEATURE_SOUND=0 \
+CFLAGS = -std=gnu99 -O2 -G0 -Wall -DPSP -DNORMALUNIX -DFEATURE_SOUND=1 \
          -DDOOMGENERIC_RESX=320 -DDOOMGENERIC_RESY=200 \
          -Wno-unused-variable -Wno-unused-parameter -Wno-pointer-sign \
          -Wno-missing-braces -Wno-implicit-function-declaration \
