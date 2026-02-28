@@ -56,6 +56,9 @@ It features a custom OPL2 synthesizer, native resolution, and full optimization 
 | **Start** | Menu (Escape) |
 | **Select** | Confirm (Enter) |
 
+Quick Save: D-Pad Up (Saves to slot 0)
+Quick Load: D-Pad Down (Loads from slot 0)
+Note: Both have a 1-second cooldown. The in-game save/load menu does not work, please use these combos instead.
 ---
 
 ## 📦 Installation
