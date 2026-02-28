@@ -8,6 +8,10 @@ Includes hardware-accelerated rendering via GU, full controller mapping, OPL2 FM
 ![Build](https://img.shields.io/github/actions/workflow/status/DraxTube/Chex-Quest-PSP/build.yml?branch=main)
 ![License](https://img.shields.io/badge/license-GPL--2.0-green)
 
+### 🔥 ALSO AVAILABLE ON PSVITA!
+**I have just released a native port for the PlayStation Vita!**
+It features a custom OPL2 synthesizer, native resolution, and full optimization for the PSVITA hardware.
+👉 **[Check out the Chex Quest PSP Port here](https://github.com/DraxTube/chexquest-vita)**
 ---
 
 ## 📸 Screenshots
